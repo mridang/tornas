@@ -1,0 +1,21 @@
+[workspace]
+members = ["crates/tornas"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/mridang/tornas"
+authors = ["Mridang Agarwalla <mridang.agarwalla@gmail.com>"]
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+debug = false
+incremental = false
+overflow-checks = false

@@ -1,0 +1,74 @@
+{
+  "plugins": [
+    "@semantic-release/commit-analyzer",
+    "@semantic-release/release-notes-generator",
+    "semantic-release-cargo",
+    [
+      "@mridang/semantic-release-oci",
+      {
+        "dockerRegistry": "docker.io",
+        "dockerProject": "mridang",
+        "dockerImage": "tornas",
+        "dockerTags": [
+          "latest",
+          "{{major}}",
+          "{{version}}"
+        ],
+        "dockerTimeout": 3600000,
+        "dockerBake": {
+          "file": "docker-bake.hcl",
+          "group": "release",
+          "imageTarget": "image"
+        }
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "assets": [
+          {
+            "path": "dist/linux_amd64/tornas",
+            "name": "tornas-linux-amd64",
+            "label": "tornas (linux/amd64)"
+          },
+          {
+            "path": "dist/linux_amd64/tornas.sha256",
+            "name": "tornas-linux-amd64.sha256",
+            "label": "tornas (linux/amd64) sha256"
+          },
+          {
+            "path": "dist/linux_arm64/tornas",
+            "name": "tornas-linux-arm64",
+            "label": "tornas (linux/arm64)"
+          },
+          {
+            "path": "dist/linux_arm64/tornas.sha256",
+            "name": "tornas-linux-arm64.sha256",
+            "label": "tornas (linux/arm64) sha256"
+          },
+          {
+            "path": "dist/linux_arm_v7/tornas",
+            "name": "tornas-linux-armv7",
+            "label": "tornas (linux/arm/v7)"
+          },
+          {
+            "path": "dist/linux_arm_v7/tornas.sha256",
+            "name": "tornas-linux-armv7.sha256",
+            "label": "tornas (linux/arm/v7) sha256"
+          }
+        ]
+      }
+    ],
+    [
+      "@semantic-release/git",
+      {
+        "assets": [
+          "Cargo.toml",
+          "Cargo.lock",
+          "crates/*/Cargo.toml"
+        ],
+        "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+      }
+    ]
+  ]
+}

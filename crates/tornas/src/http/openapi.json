@@ -1,0 +1,929 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "tornas API",
+    "version": "0.1.0",
+    "description": "Home media center: torrent-backed movie library with an LRU disk budget. Movies are keyed by IMDb id. No authentication; intended for a home LAN."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "tags": [
+    {
+      "name": "movies"
+    },
+    {
+      "name": "system"
+    },
+    {
+      "name": "stremio"
+    },
+    {
+      "name": "video"
+    }
+  ],
+  "paths": {
+    "/api": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "API root with links to resources",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "This document",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/movies": {
+      "get": {
+        "tags": [
+          "movies"
+        ],
+        "summary": "List movies",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "checking",
+                "downloading",
+                "seeding",
+                "done",
+                "paused",
+                "error",
+                "missing"
+              ]
+            },
+            "description": "Only movies in this state"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Movies, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Movie"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "movies"
+        ],
+        "summary": "Add a movie",
+        "description": "Looks the IMDb id up on TMDB, resolves the magnet, evicts least-recently-used movies until the video fits the disk budget, then starts the download. Returns once the download has started.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddMovie"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "URL of the new movie"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Movie"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Error"
+          },
+          "404": {
+            "description": "TMDB has no movie for that IMDb id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Movie or torrent already in the library",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "description": "Validation failed (bad imdb_id, magnet or JSON shape)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "TMDB unreachable or returned an error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "Cannot free enough space: everything evictable is protected, or the file exceeds the whole budget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/movies/{imdb_id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ImdbId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "movies"
+        ],
+        "summary": "Get a movie",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Movie"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "movies"
+        ],
+        "summary": "Update a movie",
+        "description": "Only `last_used_at` is writable. Setting it to \"now\" moves the movie to the back of the eviction queue.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "last_used_at": {
+                    "oneOf": [
+                      {
+                        "type": "integer",
+                        "description": "unix seconds"
+                      },
+                      {
+                        "type": "string",
+                        "enum": [
+                          "now"
+                        ]
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated movie",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Movie"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "movies"
+        ],
+        "summary": "Remove a movie and delete its files",
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/budget": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Disk budget",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Budget"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/session": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Torrent session totals",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Recent events (adds, evictions, completions)",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "maximum": 500
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Event"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/status": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Everything in one document: budget, session, movies, events",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Prometheus metrics",
+        "responses": {
+          "200": {
+            "description": "text/plain; version=0.0.4"
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Liveness",
+        "responses": {
+          "200": {
+            "description": "ok"
+          }
+        }
+      }
+    },
+    "/manifest.json": {
+      "get": {
+        "tags": [
+          "stremio"
+        ],
+        "summary": "Stremio addon manifest",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/catalog/movie/local.json": {
+      "get": {
+        "tags": [
+          "stremio"
+        ],
+        "summary": "Stremio catalog",
+        "responses": {
+          "200": {
+            "description": "{ metas: [...] }"
+          }
+        }
+      }
+    },
+    "/meta/movie/{imdb_id}.json": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ImdbId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "stremio"
+        ],
+        "summary": "Stremio meta",
+        "responses": {
+          "200": {
+            "description": "{ meta: {...} | null }"
+          }
+        }
+      }
+    },
+    "/stream/movie/{imdb_id}.json": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ImdbId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "stremio"
+        ],
+        "summary": "Stremio streams",
+        "responses": {
+          "200": {
+            "description": "{ streams: [...] }"
+          }
+        }
+      }
+    },
+    "/video/{imdb_id}/{filename}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ImdbId"
+        },
+        {
+          "name": "filename",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string"
+          },
+          "description": "Cosmetic; players use it for the title"
+        }
+      ],
+      "get": {
+        "tags": [
+          "video"
+        ],
+        "summary": "Video bytes with HTTP Range support",
+        "parameters": [
+          {
+            "name": "Range",
+            "in": "header",
+            "schema": {
+              "type": "string"
+            },
+            "example": "bytes=0-1023"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Whole file"
+          },
+          "206": {
+            "description": "Partial content"
+          },
+          "404": {
+            "$ref": "#/components/responses/Error"
+          },
+          "416": {
+            "description": "Range not satisfiable"
+          }
+        }
+      }
+    },
+    "/api/trackers": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Public tracker feed: active list, per-source status",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Re-fetch tracker sources now; re-announces active downloads if the list changed",
+        "responses": {
+          "200": {
+            "description": "{changed, active, reannounced}"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ]
+      }
+    },
+    "/api/config": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Effective configuration (file + env + flags), secrets omitted",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/api/logs": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Recent log lines from the in-memory ring",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "only lines with seq greater than this"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 200,
+              "maximum": 2000
+            }
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "error",
+                "warn",
+                "info",
+                "debug",
+                "trace"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "lines, oldest first"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "ImdbId": {
+        "name": "imdb_id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "pattern": "^tt[0-9]+$"
+        },
+        "example": "tt0111161"
+      }
+    },
+    "responses": {
+      "Error": {
+        "description": "Error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "not_found",
+                  "conflict",
+                  "invalid",
+                  "no_space",
+                  "upstream",
+                  "bad_request",
+                  "unsupported_media_type",
+                  "internal",
+                  "unauthorized"
+                ]
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "message"
+            ]
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "AddMovie": {
+        "type": "object",
+        "required": [
+          "imdb_id"
+        ],
+        "properties": {
+          "imdb_id": {
+            "type": "string",
+            "pattern": "^tt[0-9]+$",
+            "example": "tt0111161"
+          },
+          "magnet": {
+            "type": "string",
+            "example": "magnet:?xt=urn:btih:..."
+          },
+          "initial_peers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "host:port peers to try first; only needed without DHT/trackers",
+            "example": [
+              "192.168.1.20:6881"
+            ]
+          },
+          "torrent_url": {
+            "type": "string",
+            "description": "URL of a .torrent file"
+          },
+          "torrent_base64": {
+            "type": "string",
+            "description": "Base64-encoded .torrent file"
+          }
+        },
+        "description": "Exactly one of magnet, torrent_url, torrent_base64 is required. Private torrents must be added from their .torrent file, never a magnet, so no DHT lookup happens."
+      },
+      "Torrent": {
+        "type": "object",
+        "properties": {
+          "info_hash": {
+            "type": "string"
+          },
+          "imdb_id": {
+            "type": "string"
+          },
+          "magnet": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer"
+          },
+          "video_file_idx": {
+            "type": "integer"
+          },
+          "video_file_name": {
+            "type": "string"
+          },
+          "added_at": {
+            "type": "integer"
+          }
+        }
+      },
+      "Movie": {
+        "type": "object",
+        "properties": {
+          "imdb_id": {
+            "type": "string"
+          },
+          "tmdb_id": {
+            "type": "integer",
+            "nullable": true
+          },
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "type": "integer",
+            "nullable": true
+          },
+          "overview": {
+            "type": "string",
+            "nullable": true
+          },
+          "poster_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "backdrop_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "runtime_min": {
+            "type": "integer",
+            "nullable": true
+          },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "rating": {
+            "type": "number",
+            "nullable": true
+          },
+          "added_at": {
+            "type": "integer",
+            "description": "unix seconds"
+          },
+          "last_used_at": {
+            "type": "integer",
+            "description": "unix seconds; drives LRU eviction"
+          },
+          "torrent": {
+            "$ref": "#/components/schemas/Torrent"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "checking",
+              "downloading",
+              "seeding",
+              "done",
+              "paused",
+              "error",
+              "missing"
+            ]
+          },
+          "progress_bytes": {
+            "type": "integer"
+          },
+          "total_bytes": {
+            "type": "integer"
+          },
+          "finished": {
+            "type": "boolean"
+          },
+          "download_bps": {
+            "type": "integer"
+          },
+          "upload_bps": {
+            "type": "integer"
+          },
+          "peers": {
+            "type": "integer"
+          },
+          "protected": {
+            "type": "boolean",
+            "description": "inside the stream grace window, so not evictable"
+          }
+        }
+      },
+      "Budget": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer"
+          },
+          "used": {
+            "type": "integer"
+          },
+          "min_free": {
+            "type": "integer"
+          },
+          "disk_free": {
+            "type": "integer"
+          },
+          "disk_total": {
+            "type": "integer"
+          },
+          "next_eviction": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "size": {
+                "type": "integer"
+              },
+              "last_used_at": {
+                "type": "integer"
+              },
+              "protected": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "download_bps": {
+            "type": "integer"
+          },
+          "upload_bps": {
+            "type": "integer"
+          },
+          "peers_live": {
+            "type": "integer"
+          },
+          "uptime_secs": {
+            "type": "integer"
+          },
+          "torrents": {
+            "type": "integer"
+          },
+          "listen_addr": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "Event": {
+        "type": "object",
+        "properties": {
+          "ts": {
+            "type": "integer"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "start",
+              "add",
+              "evict",
+              "remove",
+              "done"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "TORNAS_API_TOKEN; required for POST/PATCH/DELETE under /api and for /api/logs when configured"
+      }
+    }
+  }
+}

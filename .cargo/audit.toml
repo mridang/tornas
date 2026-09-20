@@ -1,0 +1,3 @@
+[advisories]
+# Advisory ignores with rationale go here; the audit workflow reads this file.
+ignore = []

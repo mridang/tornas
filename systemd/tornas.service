@@ -1,0 +1,59 @@
+[Unit]
+Description=tornas (torrent client, Stremio addon, DLNA)
+Documentation=https://github.com/mridang/tornas
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/lib/tornas
+
+[Service]
+Type=notify
+NotifyAccess=main
+# Pings only while the in-process health probe passes; a hung daemon is restarted.
+WatchdogSec=90
+# Config: /etc/tornas/config.toml is picked up automatically; env overrides here.
+EnvironmentFile=-/etc/tornas/tornas.env
+Environment=TORNAS_REQUIRE_MOUNT=true
+ExecStart=/usr/local/bin/tornas server
+# `systemctl reload` -> SIGHUP -> tracker list refresh and re-announce.
+ExecReload=/bin/kill -HUP $MAINPID
+# SIGTERM flushes piece bitfields and session state before exit.
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=30
+# Hash-checking a large library on a Pi can take a while before READY.
+TimeoutStartSec=600
+Restart=always
+RestartSec=5
+
+User=tornas
+Group=tornas
+StateDirectory=tornas
+ConfigurationDirectory=tornas
+LogsDirectory=tornas
+
+# Resource limits: many peer sockets, bounded memory on small boards.
+LimitNOFILE=65536
+TasksMax=4096
+MemoryHigh=70%
+MemoryMax=85%
+OOMScoreAdjust=200
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+ReadWritePaths=/var/lib/tornas
+# self-update replaces the binary in place; allow that one path.
+ReadWritePaths=/usr/local/bin
+
+[Install]
+WantedBy=multi-user.target

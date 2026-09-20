@@ -1,0 +1,11 @@
+# Pin the exact toolchain so local, CI, and the Docker build all compile with
+# the same compiler.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]
+targets = [
+  "x86_64-unknown-linux-musl",
+  "aarch64-unknown-linux-musl",
+  "armv7-unknown-linux-musleabihf",
+]
+profile = "minimal"

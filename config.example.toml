@@ -1,0 +1,49 @@
+# tornas config file. Copy to /etc/tornas/config.toml and point
+# TORNAS_CONFIG (or --config) at it. Every key is optional; flags and TORNAS_* environment
+# variables override what is here.
+
+[network]
+# Bind IPv6 dual-stack sockets ([::]) for BitTorrent, DHT and HTTP. false = IPv4 only.
+ipv6 = true
+
+[trackers]
+# Public tracker feed: fetched periodically and attached to every public torrent.
+# Private torrents (BEP 27) never get these.
+enabled = true
+refresh = "6h"           # how often to re-fetch the sources
+fetch_timeout = "20s"    # per source
+stale_after = "7d"       # keep using the cached list this long after the last good fetch
+schemes = ["https", "udp"]   # only these URL schemes survive; add "http", "wss" if you want them
+max = 60                 # cap per torrent, in source order (sources first, static adds last)
+reject_ip_hosts = false  # true drops trackers whose host is a bare IP address
+reannounce_active = true # restart still-downloading torrents when the list changes
+
+# Sources, in priority order. Any URL that returns one tracker per line works.
+# Well-known names accepted by --tracker-source: newtrackon-stable, newtrackon-live,
+# newtrackon-udp, newtrackon-https, ngosang-best, ngosang-all, ngosang-all-udp,
+# ngosang-all-https, ngosang-all-ip, xiu2-best, xiu2-all, xiu2-http.
+[[trackers.sources]]
+name = "newtrackon-stable"
+url = "https://newtrackon.com/api/stable"
+
+[[trackers.sources]]
+name = "ngosang-best"
+url = "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt"
+
+[[trackers.sources]]
+name = "xiu2-best"
+url = "https://cf.trackerslist.com/best.txt"
+
+# A bigger list, opt in, first 40 entries only, and allow plain http from just this source.
+[[trackers.sources]]
+name = "ngosang-all"
+url = "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_all.txt"
+enabled = false
+take = 40
+schemes = ["https", "udp", "http"]
+
+[trackers.static]
+# Always added (still subject to the scheme filter).
+add = ["udp://tracker.opentrackr.org:1337/announce"]
+# Never added: full URLs, hostnames, or *.domain globs.
+block = ["*.example-bad-tracker.net"]

@@ -1,0 +1,60 @@
+[package]
+name = "tornas"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Single-binary home media center: torrent client, Stremio addon, DLNA server, LRU disk budget"
+publish = false
+
+[[bin]]
+name = "tornas"
+path = "src/main.rs"
+
+[dependencies]
+# Torrent engine. default-features off avoids OpenSSL; rust-tls uses rustls + aws-lc-rs which
+# cross-compiles statically to every musl target we ship (verified for aarch64 and armv7).
+librqbit = { git = "https://github.com/ikatson/rqbit", rev = "002a348", default-features = false, features = ["rust-tls", "upnp-serve-adapter"] }
+upnp-serve = { package = "librqbit-upnp-serve", git = "https://github.com/ikatson/rqbit", rev = "002a348" }
+
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "signal", "time", "sync"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+axum = { version = "0.8", features = ["json", "http1"] }
+axum-server = { version = "0.8", features = ["tls-rustls"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+http = "1"
+bytes = "1"
+futures = "0.3"
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "query", "charset"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+humantime = "2"
+rusqlite = { version = "0.40", features = ["bundled"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json", "registry"] }
+tracing-appender = "0.2"
+nix = { version = "0.30", features = ["fs"] }
+mime_guess = { version = "2", default-features = false }
+parking_lot = "0.12"
+ratatui = "0.30"
+crossterm = "0.29"
+rand = "0.9"
+gethostname = "1"
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
+url = "2"
+toml = "0.9"
+base64 = "0.22"
+humantime-serde = "1"
+mdns-sd = "0.21"
+sd-notify = "0.5"
+sha2 = "0.11"
+hex = "0.4"
+sha1w = { package = "librqbit-sha1-wrapper", git = "https://github.com/ikatson/rqbit", rev = "002a348", default-features = false, features = ["sha1-ring"] }
+
+[dev-dependencies]
+tempfile = "3"

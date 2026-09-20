@@ -1,0 +1,32 @@
+name: Format Code
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: ./
+
+jobs:
+  code-formatting:
+    name: rustfmt --check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Runner Common Setup
+        uses: mridang/action-runner-common@v1
+
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8  # stable
+        with:
+          components: rustfmt
+
+      - name: Check Formatting
+        run: cargo fmt --all -- --check

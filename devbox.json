@@ -1,0 +1,41 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.10.7/.schema/devbox.schema.json",
+  "packages": [
+    "rustup@1.27.1",
+    "libiconvReal@1.17",
+    "darwin.apple_sdk.frameworks.Security",
+    "darwin.apple_sdk.frameworks.SystemConfiguration",
+    "zig@0.13.0",
+    "cmake@latest",
+    "pkg-config@latest",
+    "ffmpeg-headless@latest"
+  ],
+  "env": {
+    "CARGO_HOME": "$DEVBOX_PROJECT_ROOT/.cargo",
+    "RUSTUP_HOME": "$DEVBOX_PROJECT_ROOT/.rustup",
+    "CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER": "/usr/bin/cc"
+  },
+  "shell": {
+    "init_hook": [
+      "rustup show >/dev/null 2>&1 || true"
+    ],
+    "scripts": {
+      "test": "cargo test --workspace",
+      "lint": "cargo clippy --all-targets --workspace -- -D warnings",
+      "format": "cargo fmt --all",
+      "build": "cargo build --release",
+      "build-amd64": "cargo zigbuild --release --target x86_64-unknown-linux-musl",
+      "build-arm64": "cargo zigbuild --release --target aarch64-unknown-linux-musl",
+      "build-armv7": "cargo zigbuild --release --target armv7-unknown-linux-musleabihf",
+      "build-all": "devbox run build-amd64 && devbox run build-arm64 && devbox run build-armv7",
+      "docker-build": "mkdir -p dist && docker buildx bake",
+      "docker-build-local": "docker buildx bake local",
+      "docker-build-amd64": "docker buildx bake amd64",
+      "docker-build-arm64": "docker buildx bake arm64",
+      "docker-push": "docker buildx bake push",
+      "start": "cargo run --bin tornas -- server",
+      "build-docs": "cargo doc --workspace --no-deps",
+      "clean": "cargo clean"
+    }
+  }
+}

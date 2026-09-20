@@ -1,0 +1,403 @@
+//! Command line and environment configuration. Every server flag has an `TORNAS_*`
+//! environment variable so a systemd `EnvironmentFile` can configure the daemon.
+
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
+
+use anyhow::Context;
+use clap::{Args, Parser, Subcommand};
+use serde::{Deserialize, Serialize};
+
+use crate::trackers::TrackersConfig;
+
+/// Optional TOML config file. Everything in it has a default; flags and
+/// environment variables override the file.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct FileConfig {
+    pub trackers: TrackersConfig,
+    pub network: NetworkConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct NetworkConfig {
+    /// Bind IPv6 dual-stack sockets (`[::]`) for BitTorrent, DHT and HTTP. When false
+    /// everything binds IPv4 only.
+    pub ipv6: bool,
+}
+impl Default for NetworkConfig {
+    fn default() -> Self {
+        Self { ipv6: true }
+    }
+}
+
+impl FileConfig {
+    /// Standard locations, first match wins: /etc/tornas/config.toml (Debian/FHS),
+    /// then $XDG_CONFIG_HOME/tornas/config.toml, then ~/.config/tornas/config.toml.
+    pub fn discover() -> Option<PathBuf> {
+        let mut candidates = vec![PathBuf::from("/etc/tornas/config.toml")];
+        if let Some(x) = std::env::var_os("XDG_CONFIG_HOME") {
+            candidates.push(PathBuf::from(x).join("tornas/config.toml"));
+        }
+        if let Some(h) = std::env::var_os("HOME") {
+            candidates.push(PathBuf::from(h).join(".config/tornas/config.toml"));
+        }
+        candidates.into_iter().find(|p| p.is_file())
+    }
+
+    pub fn load(path: Option<&std::path::Path>) -> anyhow::Result<Self> {
+        let discovered;
+        let path = match path {
+            Some(p) => p,
+            None => match Self::discover() {
+                Some(p) => {
+                    tracing::info!("using config file {}", p.display());
+                    discovered = p;
+                    &discovered
+                }
+                None => return Ok(Self::default()),
+            },
+        };
+        let text =
+            std::fs::read_to_string(path).with_context(|| format!("reading config {path:?}"))?;
+        toml::from_str(&text).with_context(|| format!("parsing config {path:?}"))
+    }
+}
+
+#[derive(Parser, Debug)]
+#[command(name = "tornas", version, about)]
+pub struct Cli {
+    /// Log filter, e.g. `info` or `tornas=debug,librqbit=info`.
+    #[arg(long, env = "TORNAS_LOG", default_value = "info", global = true)]
+    pub log: String,
+
+    /// Console/file log format.
+    #[arg(
+        long,
+        env = "TORNAS_LOG_FORMAT",
+        default_value = "text",
+        value_enum,
+        global = true
+    )]
+    pub log_format: crate::logging::LogFormat,
+
+    /// Also write daily-rotated log files into this directory.
+    #[arg(long, env = "TORNAS_LOG_DIR", global = true)]
+    pub log_dir: Option<PathBuf>,
+
+    /// How many rotated log files to keep.
+    #[arg(long, env = "TORNAS_LOG_KEEP", default_value = "7", global = true)]
+    pub log_keep: usize,
+
+    #[command(subcommand)]
+    pub cmd: Command,
+}
+
+#[derive(Subcommand, Debug)]
+#[allow(clippy::large_enum_variant)]
+pub enum Command {
+    /// Run the daemon: torrent client, Stremio addon, DLNA server and HTTP API.
+    Server(ServerOpts),
+    /// Print a one-shot status snapshot from a running server.
+    Status(ClientOpts),
+    /// Live terminal dashboard of a running server.
+    Top(ClientOpts),
+    /// Generate dummy movies and .torrent files for local testing.
+    Fixtures(FixturesOpts),
+    /// Seed every .torrent in a directory from local files (test helper, no DHT).
+    Seed(SeedOpts),
+    /// Probe a running server; exit 0 if healthy, 1 otherwise (for scripts and HEALTHCHECK).
+    Health(HealthOpts),
+    /// Download the release binary for this architecture, verify its checksum and replace this executable.
+    SelfUpdate(UpdateOpts),
+    /// Report CPU hashing capability, disk placement and environment; benchmark SHA-1.
+    Doctor(DoctorOpts),
+    /// Show recent server log lines (from the in-memory ring, no journal needed).
+    Logs(LogsOpts),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ServerOpts {
+    /// TOML config file (see config.example.toml). Defaults to /etc/tornas/config.toml
+    /// or $XDG_CONFIG_HOME/tornas/config.toml when present.
+    #[arg(long, env = "TORNAS_CONFIG")]
+    pub config: Option<PathBuf>,
+
+    /// Directory for downloads, the catalog database and session state.
+    #[arg(long, env = "TORNAS_DATA_DIR", default_value = "/var/lib/tornas")]
+    pub data_dir: PathBuf,
+
+    /// Maximum bytes torrents may occupy, e.g. 800G. Oldest movies are evicted to stay under it.
+    #[arg(long, env = "TORNAS_DISK_BUDGET", value_parser = crate::units::parse_size)]
+    pub disk_budget: u64,
+
+    /// Never let the filesystem's free space drop below this, e.g. 20G.
+    #[arg(long, env = "TORNAS_MIN_FREE", default_value = "20G", value_parser = crate::units::parse_size)]
+    pub min_free: u64,
+
+    /// A movie streamed within this window is never evicted.
+    #[arg(long, env = "TORNAS_STREAM_GRACE", default_value = "15m", value_parser = humantime::parse_duration)]
+    pub stream_grace: Duration,
+
+    /// Keep seeding after a download completes. By default a finished movie is paused
+    /// so it uses no upload bandwidth; it still streams from disk.
+    #[arg(long, env = "TORNAS_KEEP_SEEDING")]
+    pub keep_seeding: bool,
+
+    /// How often the background sweep re-checks the budget.
+    #[arg(long, env = "TORNAS_SWEEP_INTERVAL", default_value = "5m", value_parser = humantime::parse_duration)]
+    pub sweep_interval: Duration,
+
+    /// HTTP listen address for the API, Stremio addon, streams and DLNA.
+    /// `[::]` answers on IPv4 and IPv6.
+    #[arg(long, env = "TORNAS_HTTP_LISTEN", default_value = "[::]:3030")]
+    pub http_listen: SocketAddr,
+
+    /// Force IPv4 everywhere (overrides `network.ipv6` in the config file).
+    #[arg(long, env = "TORNAS_IPV4_ONLY")]
+    pub ipv4_only: bool,
+
+    /// Disable the public tracker feed (overrides `trackers.enabled`).
+    #[arg(long, env = "TORNAS_TRACKERS_DISABLE")]
+    pub disable_trackers: bool,
+
+    /// Extra tracker list source URL, or a known name like `ngosang-all`. Repeatable.
+    /// Adds to the sources in the config file.
+    #[arg(
+        long = "tracker-source",
+        env = "TORNAS_TRACKER_SOURCES",
+        value_delimiter = ','
+    )]
+    pub tracker_sources: Vec<String>,
+
+    /// Allowed tracker schemes, comma separated (overrides `trackers.schemes`).
+    #[arg(long, env = "TORNAS_TRACKER_SCHEMES", value_delimiter = ',')]
+    pub tracker_schemes: Option<Vec<String>>,
+
+    /// Extra static tracker URL to always add. Repeatable.
+    #[arg(long = "tracker", env = "TORNAS_TRACKERS", value_delimiter = ',')]
+    pub extra_trackers: Vec<String>,
+
+    /// Base URL browsers and TVs use to reach this server, e.g. http://192.168.1.10:3030.
+    /// Defaults to the Host header of each request.
+    #[arg(long, env = "TORNAS_PUBLIC_URL")]
+    pub public_url: Option<String>,
+
+    /// PEM certificate to serve HTTPS (needed for web.stremio.com on non-localhost addresses).
+    #[arg(long, env = "TORNAS_TLS_CERT", requires = "tls_key")]
+    pub tls_cert: Option<PathBuf>,
+    /// PEM private key for --tls-cert.
+    #[arg(long, env = "TORNAS_TLS_KEY", requires = "tls_cert")]
+    pub tls_key: Option<PathBuf>,
+
+    /// TMDB v4 read access token (Bearer). Preferred over the v3 key.
+    #[arg(long, env = "TORNAS_TMDB_TOKEN", hide_env_values = true)]
+    pub tmdb_token: Option<String>,
+    /// TMDB v3 API key.
+    #[arg(long, env = "TORNAS_TMDB_API_KEY", hide_env_values = true)]
+    pub tmdb_api_key: Option<String>,
+    /// TMDB API base URL. Override for tests.
+    #[arg(
+        long,
+        env = "TORNAS_TMDB_BASE_URL",
+        default_value = "https://api.themoviedb.org/3"
+    )]
+    pub tmdb_base_url: String,
+
+    /// Bearer token required for POST/PATCH/DELETE under /api. GETs, Stremio and
+    /// video stay open so players work. Unset = no auth (home LAN only).
+    #[arg(long, env = "TORNAS_API_TOKEN", hide_env_values = true)]
+    pub api_token: Option<String>,
+
+    /// Check GitHub for a new release this often and install it in place, then
+    /// restart the process (works with and without systemd). Off when unset.
+    #[arg(long, env = "TORNAS_AUTO_UPDATE", value_parser = humantime::parse_duration)]
+    pub auto_update: Option<Duration>,
+    /// GitHub repository for auto-update.
+    #[arg(long, env = "TORNAS_UPDATE_REPO", default_value = "mridang/tornas")]
+    pub update_repo: String,
+
+    /// Evict a download that has made no progress for this long (and is outside the
+    /// stream grace window), so a dead torrent cannot hold budget forever.
+    #[arg(long, env = "TORNAS_STALL_TIMEOUT", default_value = "6h", value_parser = humantime::parse_duration)]
+    pub stall_timeout: Duration,
+
+    /// Refuse to start unless the data dir is on a different filesystem than `/`
+    /// (protects an SD card when the USB disk failed to mount).
+    #[arg(long, env = "TORNAS_REQUIRE_MOUNT")]
+    pub require_mount: bool,
+
+    /// Hostname to advertise over mDNS, reachable as `<name>.local`.
+    #[arg(long, env = "TORNAS_MDNS_NAME", default_value = "tornas")]
+    pub mdns_name: String,
+    /// Disable mDNS advertisement.
+    #[arg(long, env = "TORNAS_MDNS_DISABLE")]
+    pub disable_mdns: bool,
+
+    /// Friendly name announced over DLNA/UPnP.
+    #[arg(long, env = "TORNAS_DLNA_NAME")]
+    pub dlna_name: Option<String>,
+    /// Disable the DLNA/UPnP media server.
+    #[arg(long, env = "TORNAS_DLNA_DISABLE")]
+    pub disable_dlna: bool,
+
+    /// BitTorrent listen port (TCP). Random if unset.
+    #[arg(long, env = "RQBIT_LISTEN_PORT")]
+    pub listen_port: Option<u16>,
+    /// Disable DHT (use for local tests with explicit peers).
+    #[arg(long, env = "RQBIT_DHT_DISABLE")]
+    pub disable_dht: bool,
+    /// Disable UPnP port forwarding on the router.
+    #[arg(long, env = "RQBIT_UPNP_PORT_FORWARD_DISABLE")]
+    pub disable_upnp_port_forward: bool,
+    /// Download rate limit in bytes/s.
+    #[arg(long, env = "TORNAS_RATELIMIT_DOWNLOAD")]
+    pub ratelimit_download: Option<u32>,
+    /// Upload rate limit in bytes/s.
+    #[arg(long, env = "TORNAS_RATELIMIT_UPLOAD")]
+    pub ratelimit_upload: Option<u32>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ClientOpts {
+    /// Server base URL.
+    #[arg(long, env = "TORNAS_SERVER", default_value = "http://127.0.0.1:3030")]
+    pub server: String,
+    /// Print raw JSON instead of a table (status only).
+    #[arg(long)]
+    pub json: bool,
+    /// Refresh interval for `top`.
+    #[arg(long, default_value = "1s", value_parser = humantime::parse_duration)]
+    pub interval: Duration,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct FixturesOpts {
+    /// Output directory; gets `movies/<name>/<name>.mp4` and `torrents/<name>.torrent`.
+    #[arg(long, default_value = "fixtures")]
+    pub out: PathBuf,
+    /// Number of dummy movies.
+    #[arg(long, default_value = "4")]
+    pub count: usize,
+    /// Size of each movie file, e.g. 30M. Ignored when ffmpeg renders real video.
+    #[arg(long, default_value = "30M", value_parser = crate::units::parse_size)]
+    pub size: u64,
+    /// Seconds of video per movie when ffmpeg is available.
+    #[arg(long, default_value = "20")]
+    pub seconds: u32,
+    /// Skip ffmpeg even if installed and write random bytes.
+    #[arg(long)]
+    pub no_ffmpeg: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct SeedOpts {
+    /// Fixtures directory produced by `fixtures`.
+    #[arg(long, default_value = "fixtures")]
+    pub dir: PathBuf,
+    /// Listen address for incoming peers.
+    #[arg(long, default_value = "127.0.0.1:15100")]
+    pub listen: SocketAddr,
+}
+
+impl ServerOpts {
+    /// Load the config file and apply CLI/env overrides on top.
+    pub fn resolve_file_config(&self) -> anyhow::Result<FileConfig> {
+        let mut fc = FileConfig::load(self.config.as_deref())?;
+        if self.ipv4_only {
+            fc.network.ipv6 = false;
+        }
+        let t = &mut fc.trackers;
+        if self.disable_trackers {
+            t.enabled = false;
+        }
+        if let Some(s) = &self.tracker_schemes {
+            t.schemes = s.clone();
+        }
+        let known = crate::trackers::known_sources();
+        for src in &self.tracker_sources {
+            let (name, url) = match known.get(src.as_str()) {
+                Some(u) => (src.clone(), (*u).to_owned()),
+                None => (src.clone(), src.clone()),
+            };
+            if !t.sources.iter().any(|x| x.url == url) {
+                t.sources.push(crate::trackers::Source {
+                    name,
+                    url,
+                    enabled: true,
+                    schemes: None,
+                    take: None,
+                });
+            }
+        }
+        t.static_lists
+            .add
+            .extend(self.extra_trackers.iter().cloned());
+        Ok(fc)
+    }
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct HealthOpts {
+    /// Server base URL.
+    #[arg(long, env = "TORNAS_SERVER", default_value = "http://127.0.0.1:3030")]
+    pub server: String,
+    #[arg(long, default_value = "5s", value_parser = humantime::parse_duration)]
+    pub timeout: Duration,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct UpdateOpts {
+    /// GitHub repository holding the releases.
+    #[arg(long, env = "TORNAS_UPDATE_REPO", default_value = "mridang/tornas")]
+    pub repo: String,
+    /// Install this exact version instead of the latest.
+    #[arg(long)]
+    pub version: Option<String>,
+    /// Only report whether an update exists (exit 10 if so).
+    #[arg(long)]
+    pub check: bool,
+    /// Reinstall even if the version is not newer.
+    #[arg(long)]
+    pub force: bool,
+    /// Install when the release has no .sha256 asset.
+    #[arg(long)]
+    pub allow_unverified: bool,
+    /// Where to write the binary. Defaults to the running executable.
+    #[arg(long)]
+    pub install_path: Option<PathBuf>,
+    /// Run `systemctl restart <service>` after installing.
+    #[arg(long)]
+    pub restart: bool,
+    #[arg(long, default_value = "tornas")]
+    pub service: String,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct DoctorOpts {
+    /// Data dir to check for mount placement and free space.
+    #[arg(long, env = "TORNAS_DATA_DIR")]
+    pub data_dir: Option<PathBuf>,
+    /// MiB to hash for the SHA-1 benchmark.
+    #[arg(long, default_value = "256")]
+    pub bench_mib: usize,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct LogsOpts {
+    /// Server base URL.
+    #[arg(long, env = "TORNAS_SERVER", default_value = "http://127.0.0.1:3030")]
+    pub server: String,
+    /// API token if the server has one (GET /api/logs is protected because logs can leak).
+    #[arg(long, env = "TORNAS_API_TOKEN", hide_env_values = true)]
+    pub token: Option<String>,
+    /// Lines to show.
+    #[arg(short = 'n', long, default_value = "100")]
+    pub lines: usize,
+    /// Keep polling for new lines.
+    #[arg(short = 'f', long)]
+    pub follow: bool,
+    /// Minimum level: error, warn, info, debug, trace.
+    #[arg(long)]
+    pub level: Option<String>,
+}

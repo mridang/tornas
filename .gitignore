@@ -1,0 +1,21 @@
+/target
+debug/
+target/
+**/*.rs.bk
+*.pdb
+.devbox
+.rustup
+/.cargo/*
+!/.cargo/audit.toml
+dist/
+*.swp
+.DS_Store
+.idea/
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+
+# tornas
+/.env
+/fixtures
+*.log

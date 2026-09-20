@@ -1,0 +1,39 @@
+name: Security Audit
+on:
+  schedule:
+    # Weekly on Monday at 06:00 UTC
+    - cron: '0 6 * * 1'
+  push:
+    branches: [master, main]
+    paths:
+      - '**/Cargo.lock'
+      - '**/Cargo.toml'
+      - '.github/workflows/audit.yml'
+  pull_request:
+    branches: [master, main]
+    paths:
+      - '**/Cargo.lock'
+      - '**/Cargo.toml'
+      - '.github/workflows/audit.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  cargo-audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Runner Common Setup
+        uses: mridang/action-runner-common@v1
+
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+
+      # Advisory ignores (with rationale) live in `.cargo/audit.toml`, which
+      # the rustsec/audit-check action discovers automatically.
+      - name: Run cargo-audit
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998  # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

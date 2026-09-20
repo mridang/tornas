@@ -1,0 +1,31 @@
+# Local end-to-end stack: a seeder holding the dummy movies and the media center
+# with a tiny budget so eviction is visible. Run `scripts/local-demo.sh` instead of
+# composing by hand; it generates fixtures first.
+services:
+  seeder:
+    image: tornas:local
+    command: ["seed", "--dir", "/fixtures", "--listen", "0.0.0.0:15100"]
+    healthcheck:
+      disable: true   # the seeder has no HTTP endpoint
+    volumes:
+      - ./fixtures:/fixtures
+  tornas:
+    image: tornas:local
+    command: ["server", "--disable-dht", "--disable-upnp-port-forward", "--disable-dlna", "--disable-trackers"]
+    env_file: .env
+    # Optional: mount a config file and set TORNAS_CONFIG=/config.toml
+    # volumes: [./config.toml:/config.toml:ro]
+    environment:
+      TORNAS_DATA_DIR: /data
+      TORNAS_DISK_BUDGET: ${TORNAS_DISK_BUDGET:-120M}
+      TORNAS_MIN_FREE: 100M
+      TORNAS_STREAM_GRACE: 30s
+      TORNAS_SWEEP_INTERVAL: 30s
+      TORNAS_PUBLIC_URL: http://127.0.0.1:3030
+    ports:
+      - "127.0.0.1:3030:3030"
+    volumes:
+      - mc-data:/data
+    depends_on: [seeder]
+volumes:
+  mc-data:
