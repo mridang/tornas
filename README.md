@@ -12,7 +12,22 @@ Runs on anything that runs Linux: Intel NUCs and PCs, Raspberry Pi 2/3/4/5, Oran
 4. The download starts. Stremio and DLNA clients see the movie immediately and can start playing while it downloads.
 5. Every stream request marks the movie as recently used. A background sweep re-checks the budget every `--sweep-interval`.
 
-## Install on Debian / Pi / NAS
+## Install on Debian / Ubuntu / Raspberry Pi OS with apt
+
+Packages for amd64, arm64 and armhf are published to an apt repository on GitHub Pages with every release:
+
+```bash
+curl -fsSL https://mridang.github.io/tornas/tornas.gpg | sudo tee /usr/share/keyrings/tornas.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/tornas.gpg] https://mridang.github.io/tornas stable main" | sudo tee /etc/apt/sources.list.d/tornas.list
+sudo apt update && sudo apt install tornas
+sudo systemctl start tornas
+```
+
+The package installs the binary, the systemd unit, the service user (sysusers.d), the directories (tmpfiles.d), `/etc/tornas/config.toml` and `/etc/tornas/tornas.env` as conffiles, and enables the unit. Upgrades come through `apt upgrade`; the daemon's in-process self-update turns itself off when it sees the package marker. The same `.deb` files are attached to each GitHub release for `apt install ./tornas_arm64.deb`.
+
+## Install anywhere else (static binary)
+
+The binary has no runtime dependencies except the system CA certificate store (package `ca-certificates` on Debian; present on Raspberry Pi OS, Synology and Alpine), which TMDB, GitHub and HTTPS trackers need. Set `SSL_CERT_FILE` to point at a bundle on exotic systems.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mridang/tornas/master/scripts/install.sh | sh

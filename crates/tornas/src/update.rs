@@ -21,6 +21,14 @@ struct Asset {
     size: u64,
 }
 
+/// Written by the .deb postinst: the package manager owns the binary, so the
+/// daemon must not replace it. `apt upgrade` is the update path instead.
+pub const APT_MANAGED_MARKER: &str = "/etc/tornas/apt-managed";
+
+pub fn apt_managed() -> bool {
+    std::path::Path::new(APT_MANAGED_MARKER).exists()
+}
+
 /// Release asset suffix for the running binary's architecture.
 pub fn asset_arch() -> anyhow::Result<&'static str> {
     Ok(match (std::env::consts::OS, std::env::consts::ARCH) {
@@ -165,6 +173,12 @@ pub async fn auto_update_forever(
     cancel: tokio_util::sync::CancellationToken,
 ) {
     use rand::Rng;
+    if apt_managed() {
+        info!(
+            "auto-update disabled: installed from a .deb ({APT_MANAGED_MARKER} exists); use apt upgrade"
+        );
+        return;
+    }
     let interval = interval.max(std::time::Duration::from_secs(600));
     info!("auto-update enabled: checking {repo} every {interval:?}");
     loop {
@@ -200,6 +214,11 @@ pub async fn auto_update_forever(
 }
 
 pub async fn run(opts: UpdateOpts) -> anyhow::Result<()> {
+    if apt_managed() && !opts.force && opts.install_path.is_none() {
+        bail!(
+            "tornas was installed from a .deb; run `apt update && apt install tornas` instead (or pass --force)"
+        );
+    }
     let arch = asset_arch()?;
     let client = reqwest::Client::builder()
         .user_agent(concat!("tornas/", env!("CARGO_PKG_VERSION")))

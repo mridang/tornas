@@ -142,3 +142,25 @@ diff. Reference issues with `Closes #N` / `Refs #N` in a trailer.
   --all-targets -- -D warnings` must pass. CI runs both.
 - Update `README.md` if you add or rename a CLI flag, and `docs/SCOPE.md`
   if the change moves something across the in-scope / deferred boundary.
+
+## apt repository signing key
+
+The release workflow signs the apt repository on `gh-pages` with a GPG key held
+in two repository secrets. Create it once:
+
+```sh
+cat > /tmp/keyspec <<'SPEC'
+%no-protection
+Key-Type: eddsa
+Key-Curve: ed25519
+Name-Real: tornas apt
+Name-Email: mridang.agarwalla@gmail.com
+Expire-Date: 0
+SPEC
+gpg --batch --gen-key /tmp/keyspec
+gpg --armor --export-secret-keys "tornas apt" | gh secret set APT_GPG_PRIVATE_KEY
+gh secret set APT_GPG_PASSPHRASE --body ""
+```
+
+Then enable GitHub Pages for the repository with the `gh-pages` branch as its
+source. Users install the public key from `https://mridang.github.io/tornas/tornas.gpg`.

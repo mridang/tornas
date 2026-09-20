@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+rm -f /etc/tornas/apt-managed
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+fi
+if [ "$1" = "purge" ]; then
+    rm -rf /etc/tornas
+    # Downloads are deliberately kept; remove /var/lib/tornas yourself.
+    echo "tornas purged; /var/lib/tornas (downloads, catalog) was left in place"
+fi
+exit 0

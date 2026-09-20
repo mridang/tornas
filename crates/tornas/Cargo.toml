@@ -58,3 +58,29 @@ sha1w = { package = "librqbit-sha1-wrapper", git = "https://github.com/ikatson/r
 
 [dev-dependencies]
 tempfile = "3"
+
+# `cargo deb --no-build --target <triple>` packages the cargo-zigbuild binary.
+[package.metadata.deb]
+name = "tornas"
+maintainer = "Mridang Agarwalla <mridang.agarwalla@gmail.com>"
+copyright = "2026, Mridang Agarwalla"
+license-file = ["../../LICENSE", "0"]
+extended-description = """\
+Single static binary that downloads movies over BitTorrent, serves them to \
+Stremio and DLNA players, fetches TMDB metadata, and evicts the least \
+recently watched titles to stay under a configured disk budget."""
+section = "video"
+priority = "optional"
+depends = "ca-certificates"
+recommends = "systemd"
+maintainer-scripts = "../../packaging/debian"
+conf-files = ["/etc/tornas/config.toml", "/etc/tornas/tornas.env"]
+assets = [
+    ["target/release/tornas", "usr/bin/tornas", "755"],
+    ["../../systemd/tornas.service", "lib/systemd/system/tornas.service", "644"],
+    ["../../systemd/tornas.sysusers.conf", "usr/lib/sysusers.d/tornas.conf", "644"],
+    ["../../systemd/tornas.tmpfiles.conf", "usr/lib/tmpfiles.d/tornas.conf", "644"],
+    ["../../config.example.toml", "etc/tornas/config.toml", "640"],
+    ["../../systemd/tornas.env.example", "etc/tornas/tornas.env", "640"],
+    ["../../README.md", "usr/share/doc/tornas/README.md", "644"],
+]

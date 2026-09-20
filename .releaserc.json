@@ -55,6 +55,36 @@
             "path": "dist/linux_arm_v7/tornas.sha256",
             "name": "tornas-linux-armv7.sha256",
             "label": "tornas (linux/arm/v7) sha256"
+          },
+          {
+            "path": "dist/linux_amd64/tornas.deb",
+            "name": "tornas_amd64.deb",
+            "label": "tornas .deb (amd64)"
+          },
+          {
+            "path": "dist/linux_amd64/tornas.deb.sha256",
+            "name": "tornas_amd64.deb.sha256",
+            "label": "tornas .deb (amd64) sha256"
+          },
+          {
+            "path": "dist/linux_arm64/tornas.deb",
+            "name": "tornas_arm64.deb",
+            "label": "tornas .deb (arm64)"
+          },
+          {
+            "path": "dist/linux_arm64/tornas.deb.sha256",
+            "name": "tornas_arm64.deb.sha256",
+            "label": "tornas .deb (arm64) sha256"
+          },
+          {
+            "path": "dist/linux_arm_v7/tornas.deb",
+            "name": "tornas_armhf.deb",
+            "label": "tornas .deb (armhf)"
+          },
+          {
+            "path": "dist/linux_arm_v7/tornas.deb.sha256",
+            "name": "tornas_armhf.deb.sha256",
+            "label": "tornas .deb (armhf) sha256"
           }
         ]
       }
