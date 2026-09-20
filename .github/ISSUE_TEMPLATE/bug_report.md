@@ -16,7 +16,7 @@ Steps to reproduce the behavior, including the schema used and options passed.
 What you expected the generated output to be.
 
 **Actual behavior**
-What tornas-faker actually generated or returned.
+What tornas actually did or returned.
 
 **Environment:**
 - OS:

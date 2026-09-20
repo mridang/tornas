@@ -1,9 +1,18 @@
-target
-.cargo
-.rustup
-.devbox
-dist
-fixtures
+target/
+dist/
+.devbox/
+.cargo/
+.rustup/
+.git/
+.github/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+**/*.rs.bk
+*.pdb
+
+# tornas
+fixtures/
 .env
-.git
 *.log
