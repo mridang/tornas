@@ -80,7 +80,7 @@ assets = [
     ["../../systemd/tornas.service", "lib/systemd/system/tornas.service", "644"],
     ["../../systemd/tornas.sysusers.conf", "usr/lib/sysusers.d/tornas.conf", "644"],
     ["../../systemd/tornas.tmpfiles.conf", "usr/lib/tmpfiles.d/tornas.conf", "644"],
-    ["../../config.example.toml", "etc/tornas/config.toml", "640"],
+    ["../../config.example.toml", "etc/tornas/config.toml", "644"],
     ["../../systemd/tornas.env.example", "etc/tornas/tornas.env", "640"],
     ["../../README.md", "usr/share/doc/tornas/README.md", "644"],
 ]

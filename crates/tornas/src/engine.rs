@@ -139,6 +139,8 @@ pub struct SessionView {
 pub struct StatusView {
     pub version: &'static str,
     pub hostname: String,
+    /// Non-fatal problems: low disk, over budget, missing credentials.
+    pub warnings: Vec<String>,
     pub budget: BudgetView,
     pub session: SessionView,
     pub movies: Vec<MovieView>,
@@ -886,6 +888,7 @@ impl Engine {
         Ok(StatusView {
             version: env!("CARGO_PKG_VERSION"),
             hostname: gethostname::gethostname().to_string_lossy().into_owned(),
+            warnings: self.warnings(),
             budget: BudgetView {
                 limit: self.opts.disk_budget,
                 used,
@@ -908,16 +911,44 @@ impl Engine {
         })
     }
 
-    /// Cheap liveness probe used by /healthz and the systemd watchdog: the catalog
-    /// answers, the session lock is not wedged, and the disk is readable.
+    /// Liveness only: the catalog answers, the session lock is not wedged and the
+    /// data directory is still there. Deliberately does NOT fail on low disk: the
+    /// watchdog gates systemd restarts on this, and a full disk is a condition to
+    /// report, not a reason to kill a working daemon. See `warnings()`.
     pub fn probe(&self) -> anyhow::Result<()> {
         self.catalog.recent_events(1)?;
         let _ = self.session.with_torrents(|it| it.count());
-        let (free, _) = disk_usage(&self.torrents_dir)?;
-        if free < self.opts.min_free / 2 {
-            bail!("disk critically low: {} free", human_bytes(free));
-        }
+        disk_usage(&self.torrents_dir)?;
         Ok(())
+    }
+
+    /// Operational problems worth surfacing, without failing health checks.
+    pub fn warnings(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if let Ok((free, _)) = disk_usage(&self.torrents_dir)
+            && free < self.opts.min_free
+        {
+            out.push(format!(
+                "only {} free on disk, below the configured minimum of {}: new movies will be refused until space is reclaimed",
+                human_bytes(free),
+                human_bytes(self.opts.min_free)
+            ));
+        }
+        if let Ok((_, used)) = self.candidates()
+            && used > self.opts.disk_budget
+        {
+            out.push(format!(
+                "usage ({}) exceeds the budget ({}); the next sweep will evict",
+                human_bytes(used),
+                human_bytes(self.opts.disk_budget)
+            ));
+        }
+        if self.tmdb.is_none() {
+            out.push(
+                "no TMDB credentials configured: movies are catalogued by IMDb id only".into(),
+            );
+        }
+        out
     }
 
     /// Evict downloads that have made no progress for `stall_timeout`. Returns evicted hashes.

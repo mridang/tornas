@@ -133,6 +133,13 @@ pub async fn status(opts: ClientOpts) -> anyhow::Result<()> {
         u(&v, &["session", "peers_live"]),
         u(&v, &["session", "torrents"])
     );
+    if let Some(ws) = v.get("warnings").and_then(|w| w.as_array())
+        && !ws.is_empty()
+    {
+        for w in ws {
+            println!("warning: {}", w.as_str().unwrap_or_default());
+        }
+    }
     println!();
     let rows = movie_rows(&v);
     let mut widths: Vec<usize> = HEADERS.iter().map(|h| h.len()).collect();
@@ -305,6 +312,20 @@ fn draw(f: &mut ratatui::Frame, data: &Result<Value, String>, server: &str) {
     f.render_widget(table, chunks[2]);
 
     let now = now_secs();
+    let warn_lines: Vec<Line> = v["warnings"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|w| w.as_str())
+                .map(|w| {
+                    Line::from(Span::styled(
+                        format!("! {w}"),
+                        Style::default().fg(Color::Yellow),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let events: Vec<Line> = v["events"]
         .as_array()
         .map(|a| {
@@ -322,6 +343,7 @@ fn draw(f: &mut ratatui::Frame, data: &Result<Value, String>, server: &str) {
                 .collect()
         })
         .unwrap_or_default();
+    let events = [warn_lines, events].concat();
     f.render_widget(
         Paragraph::new(events).block(
             Block::default()

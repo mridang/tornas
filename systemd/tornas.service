@@ -28,7 +28,6 @@ RestartSec=5
 User=tornas
 Group=tornas
 StateDirectory=tornas
-ConfigurationDirectory=tornas
 LogsDirectory=tornas
 
 # Resource limits: many peer sockets, bounded memory on small boards.

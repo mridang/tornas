@@ -100,3 +100,7 @@ mDNS advertisement (`<name>.local`, `_http._tcp`, --mdns-name/--disable-mdns); s
 
 ## Hardening pass (2026-09-20)
 Auto-update loop (--auto-update, verifies .sha256, atomic swap, exec-in-place restart keeping PID); stalled-download eviction (--stall-timeout, sweep-driven, `stalled` event + metric); API bearer token for writes and /api/logs; logging: text/json, daily-rotated files (--log-dir/--log-keep), in-memory ring served at /api/logs and by `tornas logs [-f] [--level]`.
+
+## Health semantics (2026-09-21)
+Found under a real systemd container: the watchdog pinged only while probe() succeeded, and probe() failed on low disk, so any box with free space under min_free/2 would be killed and restarted every WatchdogSec forever. probe() is now liveness-only (catalog + session + statvfs); low disk, over-budget and missing TMDB credentials surface via StatusView::warnings, `tornas status`/`top`, and the tornas_disk_below_min_free / tornas_warnings metrics.
+Also fixed there: /etc/tornas/config.toml shipped 0640 root:root and was unreadable by the service user (now 0644 + a tmpfiles z line), and ConfigurationDirectory=tornas fought tmpfiles over the directory mode (removed).
