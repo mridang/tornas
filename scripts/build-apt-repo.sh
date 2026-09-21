@@ -31,6 +31,7 @@ PASS=${APT_GPG_PASSPHRASE:-}
 gpg --batch --yes --pinentry-mode loopback --passphrase "$PASS" -u "$KEYID" --clearsign -o "dists/$SUITE/InRelease" "dists/$SUITE/Release"
 gpg --batch --yes --pinentry-mode loopback --passphrase "$PASS" -u "$KEYID" -abs -o "dists/$SUITE/Release.gpg" "dists/$SUITE/Release"
 gpg --batch --export "$KEYID" > tornas.gpg
+gpg --batch --armor --export "$KEYID" > tornas.asc
 cat > index.html <<'HTML'
 <!doctype html><title>tornas apt repository</title>
 <h1>tornas apt repository</h1>

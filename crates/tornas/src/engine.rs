@@ -177,6 +177,18 @@ impl Engine {
         let meta_dir = data_dir.join("meta");
         std::fs::create_dir_all(&meta_dir)?;
         let file_config = opts.resolve_file_config()?;
+        // Same rules as `tornas config check`, so a bad file fails loudly here
+        // instead of misbehaving later.
+        let report = crate::configcheck::validate_file_config(&file_config);
+        for w in &report.warnings {
+            warn!("config: {w}");
+        }
+        if !report.errors.is_empty() {
+            bail!(
+                "invalid configuration (run `tornas config check` for details):\n  {}",
+                report.errors.join("\n  ")
+            );
+        }
         let acl = crate::netacl::Acl::new(
             &file_config.network.allow_from,
             &file_config.network.trusted_proxies,

@@ -131,6 +131,8 @@ pub enum Command {
     Pause(PauseOpts),
     /// Resume after a pause.
     Resume(ResumeOpts),
+    /// Inspect and validate configuration.
+    Config(ConfigArgs),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -464,4 +466,30 @@ pub struct ResumeOpts {
     /// API token if the server has one.
     #[arg(long, env = "TORNAS_API_TOKEN", hide_env_values = true)]
     pub token: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ConfigArgs {
+    #[command(subcommand)]
+    pub cmd: ConfigCommand,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ConfigCommand {
+    /// Validate a config.toml and/or an environment file exactly as the server would
+    /// read them. Exits non-zero on any error, so it works as Ansible's `validate:`.
+    /// With no arguments, checks /etc/tornas/config.toml and /etc/tornas/tornas.env.
+    Check(ConfigCheckOpts),
+    /// Internal: parse server settings from this process's environment.
+    #[command(hide = true, name = "parse-env")]
+    ParseEnv,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ConfigCheckOpts {
+    /// TOML config file to check.
+    pub file: Option<PathBuf>,
+    /// Environment file to check, such as /etc/tornas/tornas.env.
+    #[arg(long)]
+    pub env: Option<PathBuf>,
 }

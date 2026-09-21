@@ -1,0 +1,12 @@
+---
+- name: Copy the package
+  ansible.builtin.copy:
+    src: "{{ tornas_deb_path }}"
+    dest: /var/cache/tornas.deb
+    mode: "0644"
+
+- name: Install the package
+  ansible.builtin.apt:
+    deb: /var/cache/tornas.deb
+    dpkg_options: force-confold,force-confdef
+  notify: Restart tornas

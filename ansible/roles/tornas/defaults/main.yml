@@ -1,0 +1,83 @@
+---
+# ---- installation ----------------------------------------------------------
+# apt:    the signed apt repository on GitHub Pages (Debian, Ubuntu, Raspberry Pi OS)
+# deb:    a .deb file from the controller (air-gapped hosts, testing)
+# binary: the static release binary, for hosts without apt
+tornas_install_method: apt
+# "latest", or a version such as "0.2.0" to pin it.
+tornas_version: latest
+tornas_apt_repo: https://mridang.github.io/tornas
+tornas_release_repo: mridang/tornas
+# Where install_method=binary downloads from; override for mirrors.
+tornas_binary_base_url: >-
+  https://github.com/{{ tornas_release_repo }}/releases/{{ 'latest/download' if tornas_version == 'latest' else 'download/v' ~ tornas_version }}
+# For install_method=deb: path to the .deb on the controller.
+tornas_deb_path: ""
+tornas_binary: "{{ '/usr/local/bin/tornas' if tornas_install_method == 'binary' else '/usr/bin/tornas' }}"
+
+# ---- /etc/tornas/tornas.env ------------------------------------------------
+tornas_disk_budget: 800G
+tornas_min_free: 20G
+# Keep these two in Ansible Vault.
+tornas_tmdb_token: ""
+tornas_api_token: ""
+tornas_http_listen: "[::]:3030"
+tornas_public_url: ""
+# Each host advertises <name>.local; the default keeps names unique per host.
+tornas_mdns_name: "{{ inventory_hostname_short }}"
+tornas_dlna_name: ""
+tornas_disable_dlna: false
+# Refuse to start when /var/lib/tornas is on the root filesystem (the SD card).
+tornas_require_mount: true
+tornas_keep_seeding: false
+tornas_stream_grace: 15m
+tornas_stall_timeout: 6h
+tornas_pause_duration: 3h
+# Leave empty when Ansible or apt manages the version; the two would fight.
+tornas_auto_update: ""
+tornas_log_format: text
+tornas_log_dir: ""
+# Bytes per second; empty means unlimited.
+tornas_ratelimit_download: ""
+tornas_ratelimit_upload: ""
+# BitTorrent port; empty means random.
+tornas_listen_port: ""
+# Any other TORNAS_* setting, e.g. {TORNAS_MIN_FREE: 50G}.
+tornas_extra_env: {}
+
+# ---- /etc/tornas/config.toml -----------------------------------------------
+tornas_ipv6: true
+# The home network, loopback and Tailscale. Add ranges, never leave it empty.
+tornas_allow_from:
+  - 127.0.0.0/8
+  - ::1/128
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
+  - 169.254.0.0/16
+  - fe80::/10
+  - fc00::/7
+  - 100.64.0.0/10
+tornas_trusted_proxies: []
+tornas_trackers_enabled: true
+tornas_trackers_refresh: 6h
+tornas_trackers_schemes: [https, udp]
+tornas_trackers_max: 60
+tornas_trackers_reject_ip_hosts: false
+tornas_trackers_reannounce_active: true
+# Each entry: name, url, and optionally enabled, take, schemes.
+# An empty list means no sources at all (not the built-in defaults).
+tornas_trackers_sources:
+  - name: newtrackon-stable
+    url: https://newtrackon.com/api/stable
+  - name: ngosang-best
+    url: https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt
+  - name: xiu2-best
+    url: https://cf.trackerslist.com/best.txt
+tornas_trackers_static_add: []
+tornas_trackers_static_block: []
+
+# ---- after changes ----------------------------------------------------------
+# Wait for /healthz and compare /api/config with these variables. Needs loopback
+# in tornas_allow_from.
+tornas_verify: true

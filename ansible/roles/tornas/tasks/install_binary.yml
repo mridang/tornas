@@ -1,0 +1,36 @@
+---
+- name: Release asset for this CPU
+  ansible.builtin.set_fact:
+    tornas_asset: >-
+      tornas-linux-{{ {'x86_64': 'amd64', 'aarch64': 'arm64', 'armv7l': 'armv7', 'armv8l': 'armv7'}[ansible_architecture] }}
+
+# The .sha256 asset holds just the hash, which get_url accepts for any file name.
+- name: Binary, verified against the published checksum
+  ansible.builtin.get_url:
+    url: "{{ tornas_binary_base_url }}/{{ tornas_asset }}"
+    checksum: "sha256:{{ tornas_binary_base_url }}/{{ tornas_asset }}.sha256"
+    dest: /usr/local/bin/tornas
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart tornas
+
+- name: Service user, directories and unit
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "{{ item.dest }}"
+    mode: "0644"
+  loop:
+    - { src: tornas.sysusers.conf, dest: /usr/lib/sysusers.d/tornas.conf }
+    - { src: tornas.tmpfiles.conf, dest: /usr/lib/tmpfiles.d/tornas.conf }
+    - { src: tornas.service, dest: /etc/systemd/system/tornas.service }
+  register: tornas_system_files
+  notify: Restart tornas
+
+- name: Create the user and directories
+  ansible.builtin.command: "{{ item }}"
+  loop:
+    - systemd-sysusers tornas.conf
+    - systemd-tmpfiles --create tornas.conf
+  when: tornas_system_files.changed
+  changed_when: true

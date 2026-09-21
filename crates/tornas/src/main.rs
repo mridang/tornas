@@ -56,6 +56,7 @@ fn main() -> anyhow::Result<()> {
             Command::Logs(o) => tornas::tui::logs(o).await,
             Command::Pause(o) => tornas::tui::pause(o).await,
             Command::Resume(o) => tornas::tui::resume(o).await,
+            Command::Config(c) => tornas::configcheck::run(c),
         }
     })
 }

@@ -14,7 +14,8 @@ URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
 echo "downloading ${URL}"
 curl -fsSL "$URL" -o /tmp/tornas
 curl -fsSL "$URL.sha256" -o /tmp/tornas.sha256
-(cd /tmp && sha256sum -c tornas.sha256) || { echo "checksum mismatch, aborting" >&2; exit 1; }
+# The .sha256 asset holds the hash alone (older releases added a file name after it).
+echo "$(cut -d' ' -f1 /tmp/tornas.sha256)  /tmp/tornas" | sha256sum -c - >/dev/null || { echo "checksum mismatch, aborting" >&2; exit 1; }
 chmod +x /tmp/tornas
 sudo install -m 0755 /tmp/tornas /usr/local/bin/tornas
 RAW="https://raw.githubusercontent.com/${REPO}/master/systemd"

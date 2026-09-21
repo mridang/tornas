@@ -45,6 +45,10 @@ Docker (multi-arch image, needs host networking for DLNA):
 docker run --network host -v mc-data:/data -e TORNAS_DISK_BUDGET=800G -e TORNAS_TMDB_TOKEN=... mridang/tornas
 ```
 
+## Ansible
+
+[`ansible/`](ansible/) has a role that installs tornas (from the apt repository, a local .deb, or the static binary), writes both config files from inventory variables, and verifies the running configuration afterwards. See [ansible/README.md](ansible/README.md).
+
 ## Configuration
 
 Standard locations on Debian and friends (FHS): config in `/etc/tornas/config.toml` and `/etc/tornas/tornas.env`, state and downloads in `/var/lib/tornas`, logs to the journal (or `/var/log/tornas` with `TORNAS_LOG_DIR`), the binary in `/usr/local/bin`. For a non-root run the config is also found at `$XDG_CONFIG_HOME/tornas/config.toml`.
@@ -127,6 +131,7 @@ tornas status --json   # raw JSON
 tornas top             # live dashboard, q to quit
 tornas health          # exit 0/1 for scripts
 tornas pause / resume  # the kill switch
+tornas config check    # validate /etc/tornas/config.toml and tornas.env
 tornas doctor          # CPU hashing support, disk placement, temperature
 ```
 

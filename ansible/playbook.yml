@@ -1,0 +1,7 @@
+---
+# Example: ansible-playbook -i inventory.ini playbook.yml --ask-vault-pass
+- name: tornas media centers
+  hosts: tornas
+  become: true
+  roles:
+    - role: tornas

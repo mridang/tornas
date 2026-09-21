@@ -21,9 +21,9 @@ COPY . .
 RUN RUST_TARGET="$(cat /rust-target)" \
  && cargo zigbuild --release --locked --target "$RUST_TARGET" \
  && cp "target/${RUST_TARGET}/release/tornas" /tornas \
- && sha256sum /tornas | sed 's# .*#  tornas#' > /tornas.sha256 \
+ && sha256sum /tornas | cut -d' ' -f1 > /tornas.sha256 \
  && cargo deb --no-build --no-strip --target "$RUST_TARGET" -p tornas -o /tornas.deb \
- && sha256sum /tornas.deb | sed 's# .*#  tornas.deb#' > /tornas.deb.sha256
+ && sha256sum /tornas.deb | cut -d' ' -f1 > /tornas.deb.sha256
 
 FROM scratch AS export
 COPY --from=builder /tornas /tornas

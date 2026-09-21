@@ -1,0 +1,77 @@
+---
+- name: Install tornas
+  ansible.builtin.include_tasks: "install_{{ tornas_install_method }}.yml"
+
+- name: Configuration directory
+  ansible.builtin.file:
+    path: /etc/tornas
+    state: directory
+    owner: root
+    group: tornas
+    mode: "0750"
+
+# `validate` runs the new binary against the rendered file on the host, so a typo
+# is rejected here instead of crash-looping the service after the restart.
+- name: Environment file
+  ansible.builtin.template:
+    src: tornas.env.j2
+    dest: /etc/tornas/tornas.env
+    owner: root
+    group: tornas
+    mode: "0640"
+    validate: "{{ tornas_binary }} config check --env %s"
+  no_log: "{{ (tornas_tmdb_token or tornas_api_token) | bool }}"
+  notify: Restart tornas
+
+- name: Config file
+  ansible.builtin.template:
+    src: config.toml.j2
+    dest: /etc/tornas/config.toml
+    owner: root
+    group: root
+    mode: "0644"
+    validate: "{{ tornas_binary }} config check %s"
+  notify: Restart tornas
+
+- name: Service enabled and running
+  ansible.builtin.systemd_service:
+    name: tornas
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# Restart now, so the checks below see the new configuration.
+- name: Apply configuration changes
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify
+  when: tornas_verify | bool
+  block:
+    - name: Wait for the server to answer
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ tornas_http_listen.split(':') | last }}/healthz"
+        return_content: true
+      register: tornas_health
+      until: tornas_health.status == 200
+      retries: 30
+      delay: 2
+
+    - name: Read the effective configuration
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ tornas_http_listen.split(':') | last }}/api/config"
+        return_content: true
+      register: tornas_effective
+
+    - name: Running configuration matches the inventory
+      ansible.builtin.assert:
+        quiet: true
+        that:
+          - tornas_effective.json.network.allow_from == tornas_allow_from
+          - tornas_effective.json.trackers.enabled == (tornas_trackers_enabled | bool)
+          - tornas_effective.json.trackers.schemes == tornas_trackers_schemes
+          - tornas_effective.json.keep_seeding == (tornas_keep_seeding | bool)
+          - tornas_effective.json.dlna == not (tornas_disable_dlna | bool)
+        fail_msg: >-
+          tornas is running but not with the configuration Ansible wrote. Compare
+          `curl -s localhost:{{ tornas_http_listen.split(':') | last }}/api/config`
+          with the inventory.

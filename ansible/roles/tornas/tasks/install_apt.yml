@@ -1,0 +1,20 @@
+---
+- name: tornas apt repository
+  ansible.builtin.deb822_repository:
+    name: tornas
+    types: deb
+    uris: "{{ tornas_apt_repo }}"
+    suites: stable
+    components: main
+    signed_by: "{{ tornas_apt_repo }}/tornas.asc"
+  register: tornas_repo
+
+# force-confold keeps the files this role templates when a package upgrade ships
+# new defaults, instead of stopping to ask.
+- name: tornas package
+  ansible.builtin.apt:
+    name: "tornas{{ '' if tornas_version == 'latest' else '=' ~ tornas_version ~ '-1' }}"
+    state: "{{ 'latest' if tornas_version == 'latest' else 'present' }}"
+    update_cache: "{{ tornas_repo.changed }}"
+    dpkg_options: force-confold,force-confdef
+  notify: Restart tornas

@@ -1,0 +1,39 @@
+{#- JSON strings, arrays and booleans are valid TOML, so to_json renders values
+    safely without hand-escaping. -#}
+# Managed by Ansible ({{ role_name | default('tornas') }} role). Local edits are overwritten.
+# Validate by hand with: tornas config check /etc/tornas/config.toml
+
+[network]
+ipv6 = {{ tornas_ipv6 | bool | to_json }}
+allow_from = {{ tornas_allow_from | to_json }}
+trusted_proxies = {{ tornas_trusted_proxies | to_json }}
+
+[trackers]
+enabled = {{ tornas_trackers_enabled | bool | to_json }}
+refresh = {{ tornas_trackers_refresh | string | to_json }}
+schemes = {{ tornas_trackers_schemes | to_json }}
+max = {{ tornas_trackers_max | int }}
+reject_ip_hosts = {{ tornas_trackers_reject_ip_hosts | bool | to_json }}
+reannounce_active = {{ tornas_trackers_reannounce_active | bool | to_json }}
+{% if tornas_trackers_sources | length == 0 %}
+sources = []
+{% endif %}
+
+[trackers.static]
+add = {{ tornas_trackers_static_add | to_json }}
+block = {{ tornas_trackers_static_block | to_json }}
+{% for s in tornas_trackers_sources %}
+
+[[trackers.sources]]
+name = {{ s.name | to_json }}
+url = {{ s.url | to_json }}
+{% if s.enabled is defined %}
+enabled = {{ s.enabled | bool | to_json }}
+{% endif %}
+{% if s.take is defined %}
+take = {{ s.take | int }}
+{% endif %}
+{% if s.schemes is defined %}
+schemes = {{ s.schemes | to_json }}
+{% endif %}
+{% endfor %}
