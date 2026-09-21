@@ -19,7 +19,7 @@ use librqbit::{
 use librqbit::{ManagedTorrent, dht::Id20};
 type ManagedTorrentHandle = Arc<ManagedTorrent>;
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     budget::{self, Candidate},
@@ -80,6 +80,8 @@ pub struct Engine {
     weak: parking_lot::RwLock<std::sync::Weak<Engine>>,
     /// info_hash -> (progress bytes, when it last changed), for stall detection.
     progress_seen: parking_lot::Mutex<std::collections::HashMap<String, (u64, i64)>>,
+    /// Global kill switch. `Some` while everything is paused.
+    pause: parking_lot::Mutex<Option<PauseState>>,
     /// Serialises add + evict so two concurrent adds cannot both pass the budget check.
     add_lock: tokio::sync::Mutex<()>,
 }
@@ -138,6 +140,7 @@ pub struct SessionView {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct StatusView {
+    pub pause: PauseView,
     pub version: &'static str,
     pub hostname: String,
     /// Non-fatal problems: low disk, over budget, missing credentials.
@@ -228,6 +231,7 @@ impl Engine {
             .await
             .context("starting torrent session")?;
 
+        let pause0 = load_pause(data_dir);
         let engine = Arc::new(Self {
             session,
             catalog,
@@ -241,6 +245,7 @@ impl Engine {
             started: Instant::now(),
             weak: parking_lot::RwLock::new(std::sync::Weak::new()),
             progress_seen: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            pause: parking_lot::Mutex::new(pause0),
             add_lock: tokio::sync::Mutex::new(()),
         });
         *engine.weak.write() = Arc::downgrade(&engine);
@@ -248,6 +253,20 @@ impl Engine {
         // fires immediately. Never block startup on it: a slow or offline source would
         // otherwise hold the HTTP server, Stremio and DLNA unreachable.
         engine.reconcile().await?;
+        if engine.is_paused() {
+            let n = engine.apply_pause().await;
+            let v = engine.pause_view();
+            match v.remaining_secs {
+                Some(r) => warn!(
+                    "restored a pause from disk: everything stays paused for another {}",
+                    crate::units::human_age(r)
+                ),
+                None => warn!("restored a pause from disk: everything stays paused until resumed"),
+            }
+            if n > 0 {
+                info!("re-paused {n} torrents that restored unpaused");
+            }
+        }
         engine.catalog.add_event("start", "server started")?;
         let handles: Vec<ManagedTorrentHandle> = engine
             .session
@@ -291,6 +310,7 @@ impl Engine {
                             overwrite: true,
                             only_files: Some(vec![row.video_file_idx]),
                             trackers: Some(self.trackers.current()),
+                            paused: self.is_paused(),
                             ..Default::default()
                         }),
                     )
@@ -338,6 +358,9 @@ impl Engine {
     /// Restart torrents that are still downloading so they pick up the current tracker list.
     /// Private torrents and finished/paused ones are left alone.
     pub async fn reannounce_active(&self) -> anyhow::Result<usize> {
+        if self.is_paused() {
+            return Ok(0);
+        }
         let list = self.trackers.current();
         let rows = self.catalog.list_torrents()?;
         let mut n = 0;
@@ -517,6 +540,13 @@ impl Engine {
     }
 
     async fn add_movie_inner(self: &Arc<Self>, req: AddMovieRequest) -> anyhow::Result<MovieView> {
+        // While paused, do nothing that touches the network, including magnet lookups.
+        if self.is_paused() {
+            return Err(fault(
+                FaultKind::Conflict,
+                "tornas is paused; resume it before adding movies",
+            ));
+        }
         let imdb_id = req.imdb_id.trim().to_owned();
         if !imdb_id.starts_with("tt")
             || imdb_id.len() < 4
@@ -862,6 +892,7 @@ impl Engine {
         Ok(StatusView {
             version: env!("CARGO_PKG_VERSION"),
             hostname: gethostname::gethostname().to_string_lossy().into_owned(),
+            pause: self.pause_view(),
             warnings: self.warnings(),
             budget: BudgetView {
                 limit: self.opts.disk_budget,
@@ -882,6 +913,140 @@ impl Engine {
             movies: self.list_movies()?,
             events: self.catalog.recent_events(20)?,
         })
+    }
+
+    // ---- global pause -----------------------------------------------------
+
+    pub fn is_paused(&self) -> bool {
+        self.pause.lock().is_some()
+    }
+
+    pub fn pause_view(&self) -> PauseView {
+        let st = self.pause.lock().clone();
+        let now = now_secs();
+        PauseView {
+            paused: st.is_some(),
+            since: st.as_ref().map(|p| p.since),
+            until: st.as_ref().and_then(|p| p.until),
+            remaining_secs: st.as_ref().and_then(|p| p.until).map(|u| (u - now).max(0)),
+            indefinite: st.as_ref().is_some_and(|p| p.until.is_none()),
+            default_duration_secs: self.opts.pause_duration.as_secs(),
+        }
+    }
+
+    /// Pause every loaded torrent that is not already paused. Idempotent.
+    async fn apply_pause(&self) -> usize {
+        let handles: Vec<ManagedTorrentHandle> = self
+            .session
+            .with_torrents(|it| it.map(|(_, h)| h.clone()).collect());
+        let mut n = 0;
+        for h in handles {
+            if h.is_paused() {
+                continue;
+            }
+            match self.session.pause(&h).await {
+                Ok(()) => n += 1,
+                Err(e) => debug!("pause {}: {e:#}", h.info_hash().as_string()),
+            }
+        }
+        n
+    }
+
+    /// Pause everything for `duration` (the configured default when `None`), or
+    /// until resumed when `indefinite`. Calling it while paused changes the end time
+    /// and keeps the original start.
+    pub async fn pause_all(
+        &self,
+        duration: Option<Duration>,
+        indefinite: bool,
+    ) -> anyhow::Result<PauseView> {
+        // Serialise with adds so a movie being added right now cannot slip out unpaused.
+        let _guard = self.add_lock.lock().await;
+        let now = now_secs();
+        let dur = duration.unwrap_or(self.opts.pause_duration);
+        if !indefinite && (dur.is_zero() || dur > Duration::from_secs(30 * 86_400)) {
+            return Err(fault(
+                FaultKind::Invalid,
+                "pause duration must be between 1 second and 30 days",
+            ));
+        }
+        let since = self.pause.lock().as_ref().map(|p| p.since).unwrap_or(now);
+        let st = PauseState {
+            since,
+            until: (!indefinite).then(|| now + dur.as_secs() as i64),
+        };
+        store_pause(&self.opts.data_dir, Some(&st))?;
+        *self.pause.lock() = Some(st);
+        let n = self.apply_pause().await;
+        let msg = if indefinite {
+            format!("paused everything ({n} torrents) until resumed")
+        } else {
+            format!(
+                "paused everything ({n} torrents) for {}",
+                humantime::format_duration(dur)
+            )
+        };
+        warn!("{msg}");
+        self.catalog.add_event("pause", &msg)?;
+        crate::metrics::paused();
+        Ok(self.pause_view())
+    }
+
+    /// Lift the pause. Finished movies stay paused unless `--keep-seeding`.
+    /// Returns how many torrents were resumed.
+    pub async fn resume_all(&self, trigger: &'static str) -> anyhow::Result<usize> {
+        let _guard = self.add_lock.lock().await;
+        if self.pause.lock().take().is_none() {
+            return Ok(0);
+        }
+        store_pause(&self.opts.data_dir, None)?;
+        let handles: Vec<ManagedTorrentHandle> = self
+            .session
+            .with_torrents(|it| it.map(|(_, h)| h.clone()).collect());
+        let mut n = 0;
+        for h in handles {
+            if !h.is_paused() || (h.stats().finished && !self.opts.keep_seeding) {
+                continue;
+            }
+            match self.session.unpause(&h).await {
+                Ok(()) => n += 1,
+                Err(e) => warn!("resume {}: {e:#}", h.info_hash().as_string()),
+            }
+        }
+        let msg = format!("resumed ({trigger}): {n} torrents restarted");
+        info!("{msg}");
+        self.catalog.add_event("resume", &msg)?;
+        crate::metrics::resumed(trigger);
+        Ok(n)
+    }
+
+    /// Resume once the pause expires, and while paused re-pause anything that
+    /// came loose (a re-announce or restore racing the pause).
+    pub async fn check_pause(&self) -> anyhow::Result<()> {
+        let st = self.pause.lock().clone();
+        match st {
+            None => {}
+            Some(p) if p.until.is_some_and(|u| now_secs() >= u) => {
+                self.resume_all("auto").await?;
+            }
+            Some(_) => {
+                let n = self.apply_pause().await;
+                if n > 0 {
+                    warn!("pause enforcement re-paused {n} torrents");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn pause_watch_forever(self: Arc<Self>) {
+        let mut tick = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            tick.tick().await;
+            if let Err(e) = self.check_pause().await {
+                warn!("pause check: {e:#}");
+            }
+        }
     }
 
     /// Per-torrent facts for `/metrics`, one entry per catalogued movie that has a
@@ -1095,6 +1260,56 @@ impl Engine {
             }
         }
     }
+}
+
+/// A global pause, persisted so a restart or power cut mid-pause stays paused.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PauseState {
+    pub since: i64,
+    /// `None` means until explicitly resumed.
+    pub until: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PauseView {
+    pub paused: bool,
+    pub since: Option<i64>,
+    pub until: Option<i64>,
+    pub remaining_secs: Option<i64>,
+    pub indefinite: bool,
+    /// What a pause lasts when no duration is given.
+    pub default_duration_secs: u64,
+}
+
+fn pause_file(data_dir: &Path) -> PathBuf {
+    data_dir.join("pause.json")
+}
+
+/// Load a persisted pause, dropping it if it has already expired.
+fn load_pause(data_dir: &Path) -> Option<PauseState> {
+    let bytes = std::fs::read(pause_file(data_dir)).ok()?;
+    let st: PauseState = serde_json::from_slice(&bytes).ok()?;
+    match st.until {
+        Some(u) if u <= now_secs() => None,
+        _ => Some(st),
+    }
+}
+
+/// Write atomically: a torn write after a power cut must not lose the pause.
+fn store_pause(data_dir: &Path, st: Option<&PauseState>) -> anyhow::Result<()> {
+    let path = pause_file(data_dir);
+    match st {
+        None => {
+            let _ = std::fs::remove_file(&path);
+        }
+        Some(st) => {
+            let tmp = path.with_extension("json.tmp");
+            std::fs::write(&tmp, serde_json::to_vec_pretty(st)?)?;
+            std::fs::File::open(&tmp)?.sync_all()?;
+            std::fs::rename(&tmp, &path)?;
+        }
+    }
+    Ok(())
 }
 
 /// One word for a torrent's state, shared by the API, the TUI and metrics.

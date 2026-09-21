@@ -14,17 +14,17 @@ pub async fn run(opts: HealthOpts) -> anyhow::Result<()> {
     let resp = match client.get(&url).send().await {
         Ok(r) => r,
         Err(e) => {
-            println!("UNHEALTHY {url}: {e}");
+            crate::outln!("UNHEALTHY {url}: {e}");
             std::process::exit(1);
         }
     };
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
     if status.is_success() {
-        println!("OK {body}");
+        crate::outln!("OK {body}");
         Ok(())
     } else {
-        println!("UNHEALTHY {status} {body}");
+        crate::outln!("UNHEALTHY {status} {body}");
         std::process::exit(1);
     }
 }

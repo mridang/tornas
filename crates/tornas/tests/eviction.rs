@@ -44,6 +44,7 @@ fn server_opts(data_dir: &Path, tmdb: SocketAddr, budget: u64) -> ServerOpts {
         min_free: 0,
         stream_grace: Duration::from_secs(0),
         keep_seeding: false,
+        pause_duration: Duration::from_secs(2),
         require_mount: false,
         api_token: None,
         auto_update: None,
@@ -264,4 +265,113 @@ async fn rejects_torrent_larger_than_budget() {
     assert!(engine.list_movies().unwrap().is_empty());
     seeder.stop().await;
     engine.session.stop().await;
+}
+
+/// The kill switch: pausing stops transfer and refuses adds, survives a restart,
+/// and lifts itself when the configured duration expires.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pause_everything_then_auto_resume() {
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("info,librqbit=warn")
+        .try_init();
+    let tmp = tempfile::tempdir().unwrap();
+    let fx_dir = tmp.path().join("fixtures");
+    let fx = fixtures::generate(&FixturesOpts {
+        out: fx_dir.clone(),
+        count: 2,
+        size: 40 * 1024 * 1024,
+        seconds: 1,
+        no_ffmpeg: true,
+    })
+    .await
+    .unwrap();
+    let seeder = fixtures::seeder(&fx_dir, "127.0.0.1:0".parse().unwrap())
+        .await
+        .unwrap();
+    let seed_addr = seeder.listen_addr().unwrap().to_string();
+    let tmdb = fake_tmdb().await;
+    let data = tmp.path().join("data");
+    let mut opts = server_opts(&data, tmdb, 1024 * 1024 * 1024);
+    // Slow enough that the download is still running when we pause it.
+    opts.ratelimit_download = Some(2 * 1024 * 1024);
+    let engine = Engine::start(opts.clone()).await.unwrap();
+
+    let req = |i: usize| AddMovieRequest {
+        imdb_id: fx[i].imdb_id.clone(),
+        magnet: Some(fx[i].magnet.clone()),
+        torrent_url: None,
+        torrent_base64: None,
+        initial_peers: vec![seed_addr.clone()],
+    };
+    engine.add_movie(req(0)).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let before = engine.get_movie(&fx[0].imdb_id).unwrap().unwrap();
+    assert!(
+        !before.finished && before.progress_bytes > 0,
+        "should be mid-download"
+    );
+
+    // Pause for the configured default (2s in this test).
+    let v = engine.pause_all(None, false).await.unwrap();
+    assert!(v.paused && !v.indefinite);
+    assert!(v.remaining_secs.unwrap() <= 2);
+    assert!(data.join("pause.json").exists(), "pause must be persisted");
+    let m = engine.get_movie(&fx[0].imdb_id).unwrap().unwrap();
+    assert_eq!(m.state, "paused");
+
+    // No transfer while paused.
+    let p1 = engine
+        .get_movie(&fx[0].imdb_id)
+        .unwrap()
+        .unwrap()
+        .progress_bytes;
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    let p2 = engine
+        .get_movie(&fx[0].imdb_id)
+        .unwrap()
+        .unwrap()
+        .progress_bytes;
+    assert_eq!(p1, p2, "progress advanced while paused");
+
+    // Adds are refused while paused, before any magnet lookup.
+    let err = engine.add_movie(req(1)).await.unwrap_err();
+    assert!(format!("{err:#}").contains("paused"), "{err:#}");
+
+    // Expiry lifts it.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    engine.check_pause().await.unwrap();
+    assert!(!engine.is_paused());
+    assert!(
+        !data.join("pause.json").exists(),
+        "pause file must be cleared"
+    );
+    let m = engine.get_movie(&fx[0].imdb_id).unwrap().unwrap();
+    assert_eq!(m.state, "downloading", "should resume downloading");
+    let ev = engine.catalog.recent_events(5).unwrap();
+    assert!(
+        ev.iter()
+            .any(|e| e.kind == "resume" && e.message.contains("auto"))
+    );
+
+    // An indefinite pause is not lifted by expiry checks, and survives a restart.
+    engine.pause_all(None, true).await.unwrap();
+    engine.check_pause().await.unwrap();
+    assert!(engine.is_paused());
+    engine.session.stop().await;
+    drop(engine);
+
+    let engine2 = Engine::start(opts).await.unwrap();
+    assert!(engine2.is_paused(), "pause must survive a restart");
+    assert!(engine2.pause_view().indefinite);
+    let m = engine2.get_movie(&fx[0].imdb_id).unwrap().unwrap();
+    assert!(
+        matches!(m.state.as_str(), "paused" | "checking"),
+        "restored torrent must stay paused, got {}",
+        m.state
+    );
+    engine2.resume_all("manual").await.unwrap();
+    assert!(!engine2.is_paused());
+
+    seeder.stop().await;
+    engine2.session.stop().await;
 }

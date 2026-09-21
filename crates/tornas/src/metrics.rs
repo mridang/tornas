@@ -81,6 +81,11 @@ pub fn install() -> Option<&'static PrometheusHandle> {
         "tornas_forbidden_source_total",
         "Requests refused because the source address is not allowed"
     );
+    describe_counter!("tornas_pauses_total", "Times everything was paused");
+    describe_counter!(
+        "tornas_resumes_total",
+        "Times a pause ended, by trigger (manual or auto on expiry)"
+    );
     describe_counter!(
         "tornas_http_requests_total",
         "HTTP requests served, by route template, method and status"
@@ -96,6 +101,9 @@ pub fn install() -> Option<&'static PrometheusHandle> {
     for k in ["range", "full"] {
         counter!("tornas_streams_total", "kind" => k).absolute(0);
     }
+    for t in ["manual", "auto"] {
+        counter!("tornas_resumes_total", "trigger" => t).absolute(0);
+    }
     for name in [
         "tornas_evictions_total",
         "tornas_evicted_bytes_total",
@@ -107,6 +115,7 @@ pub fn install() -> Option<&'static PrometheusHandle> {
         "tornas_stalled_evictions_total",
         "tornas_unauthorized_total",
         "tornas_forbidden_source_total",
+        "tornas_pauses_total",
     ] {
         counter!(name).absolute(0);
     }
@@ -142,6 +151,12 @@ pub fn forbidden_source() {
 }
 pub fn unauthorized() {
     counter!("tornas_unauthorized_total").increment(1);
+}
+pub fn paused() {
+    counter!("tornas_pauses_total").increment(1);
+}
+pub fn resumed(trigger: &'static str) {
+    counter!("tornas_resumes_total", "trigger" => trigger).increment(1);
 }
 pub fn removal() {
     counter!("tornas_removals_total").increment(1);
@@ -277,6 +292,22 @@ pub fn render(engine: &Engine) -> anyhow::Result<String> {
         status.session.uptime_secs,
     );
     process(&mut out);
+
+    // ---- global pause
+    gauge(
+        &mut out,
+        "tornas_paused",
+        "1 while everything is paused",
+        u8::from(status.pause.paused),
+    );
+    if let Some(r) = status.pause.remaining_secs {
+        gauge(
+            &mut out,
+            "tornas_pause_remaining_seconds",
+            "Seconds until the pause lifts on its own",
+            r,
+        );
+    }
 
     // ---- budget and disk
     let b = &status.budget;

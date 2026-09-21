@@ -141,7 +141,7 @@
             }
           },
           "409": {
-            "description": "Movie or torrent already in the library",
+            "description": "Movie already in the library, or everything is paused",
             "content": {
               "application/json": {
                 "schema": {
@@ -617,6 +617,116 @@
           }
         }
       }
+    },
+    "/api/pause": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Global pause state",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pause"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Pause everything",
+        "description": "Stops all downloads, uploads and tracker traffic and refuses new movies. Body optional: omitted uses the configured default (3h). Repeating it while paused moves the end time. Persisted across restarts.",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "duration": {
+                    "oneOf": [
+                      {
+                        "type": "integer",
+                        "description": "seconds"
+                      },
+                      {
+                        "type": "string",
+                        "example": "3h"
+                      }
+                    ]
+                  },
+                  "indefinite": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Paused",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pause"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "422": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Resume",
+        "description": "Idempotent. Finished movies stay paused unless --keep-seeding.",
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pause lifted; includes resumed count"
+          },
+          "401": {
+            "$ref": "#/components/responses/Error"
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Dashboard (HTML)",
+        "responses": {
+          "200": {
+            "description": "text/html"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -914,6 +1024,33 @@
           },
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "Pause": {
+        "type": "object",
+        "properties": {
+          "paused": {
+            "type": "boolean"
+          },
+          "since": {
+            "type": "integer",
+            "nullable": true
+          },
+          "until": {
+            "type": "integer",
+            "nullable": true,
+            "description": "unix seconds; null when indefinite"
+          },
+          "remaining_secs": {
+            "type": "integer",
+            "nullable": true
+          },
+          "indefinite": {
+            "type": "boolean"
+          },
+          "default_duration_secs": {
+            "type": "integer"
           }
         }
       }

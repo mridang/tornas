@@ -242,17 +242,17 @@ pub async fn run(opts: UpdateOpts) -> anyhow::Result<()> {
         .await?;
     let current = env!("CARGO_PKG_VERSION");
     let newer = version_newer(&release.tag_name, current);
-    println!("current {current}, available {} ({arch})", release.tag_name);
+    crate::outln!("current {current}, available {} ({arch})", release.tag_name);
     if opts.check {
         if newer {
-            println!("update available");
+            crate::outln!("update available");
             std::process::exit(10);
         }
-        println!("up to date");
+        crate::outln!("up to date");
         return Ok(());
     }
     if !newer && !opts.force && opts.version.is_none() {
-        println!("up to date");
+        crate::outln!("up to date");
         return Ok(());
     }
     let bin_name = format!("tornas-{arch}");
@@ -290,7 +290,7 @@ pub async fn run(opts: UpdateOpts) -> anyhow::Result<()> {
         if expected != actual {
             bail!("checksum mismatch: expected {expected}, got {actual}; not installing");
         }
-        println!("checksum verified");
+        crate::outln!("checksum verified");
     } else if !opts.allow_unverified {
         bail!("release has no {bin_name}.sha256 asset; pass --allow-unverified to install anyway");
     }
@@ -300,14 +300,14 @@ pub async fn run(opts: UpdateOpts) -> anyhow::Result<()> {
         None => std::env::current_exe().context("locating current executable")?,
     };
     install_atomically(&target, &bytes)?;
-    println!("installed {} to {}", release.tag_name, target.display());
+    crate::outln!("installed {} to {}", release.tag_name, target.display());
 
     if opts.restart {
         let st = std::process::Command::new("systemctl")
             .args(["restart", &opts.service])
             .status();
         match st {
-            Ok(s) if s.success() => println!("restarted {}", opts.service),
+            Ok(s) if s.success() => crate::outln!("restarted {}", opts.service),
             Ok(s) => bail!("systemctl restart exited with {s}"),
             Err(e) => bail!("running systemctl: {e}"),
         }

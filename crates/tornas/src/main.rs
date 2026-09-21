@@ -43,9 +43,9 @@ fn main() -> anyhow::Result<()> {
             Command::Top(o) => tornas::tui::top(o).await,
             Command::Fixtures(o) => {
                 let fx = tornas::fixtures::generate(&o).await?;
-                println!("wrote {} fixtures to {}", fx.len(), o.out.display());
+                tornas::outln!("wrote {} fixtures to {}", fx.len(), o.out.display());
                 for f in fx {
-                    println!("  {}  {}  {}", f.imdb_id, f.name, f.magnet);
+                    tornas::outln!("  {}  {}  {}", f.imdb_id, f.name, f.magnet);
                 }
                 Ok(())
             }
@@ -54,6 +54,8 @@ fn main() -> anyhow::Result<()> {
             Command::SelfUpdate(o) => tornas::update::run(o).await,
             Command::Doctor(o) => tornas::doctor::run(o),
             Command::Logs(o) => tornas::tui::logs(o).await,
+            Command::Pause(o) => tornas::tui::pause(o).await,
+            Command::Resume(o) => tornas::tui::resume(o).await,
         }
     })
 }

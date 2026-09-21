@@ -59,15 +59,15 @@ pub fn bench_sha1(mib: usize) -> f64 {
 }
 
 pub fn run(opts: DoctorOpts) -> anyhow::Result<()> {
-    println!("tornas {}", env!("CARGO_PKG_VERSION"));
-    println!(
+    crate::outln!("tornas {}", env!("CARGO_PKG_VERSION"));
+    crate::outln!(
         "os/arch:     {}/{}",
         std::env::consts::OS,
         std::env::consts::ARCH
     );
-    println!("cpu:         {}", cpu_model());
+    crate::outln!("cpu:         {}", cpu_model());
     let feats = cpu_features();
-    println!(
+    crate::outln!(
         "cpu flags:   {}",
         if feats.is_empty() {
             "(unavailable)".into()
@@ -76,7 +76,7 @@ pub fn run(opts: DoctorOpts) -> anyhow::Result<()> {
         }
     );
     let hw_sha1 = feats.iter().any(|f| f == "sha1" || f == "sha_ni");
-    println!(
+    crate::outln!(
         "sha1 in hw:  {}",
         match (std::env::consts::OS, hw_sha1) {
             ("linux", true) => "yes (aws-lc-rs picks the SHA extension at runtime)",
@@ -87,11 +87,11 @@ pub fn run(opts: DoctorOpts) -> anyhow::Result<()> {
         }
     );
     let rate = bench_sha1(opts.bench_mib);
-    println!(
+    crate::outln!(
         "sha1 speed:  {rate:.0} MiB/s over {} MiB (this bounds hash-check speed on add)",
         opts.bench_mib
     );
-    println!(
+    crate::outln!(
         "cores:       {}",
         std::thread::available_parallelism()
             .map(|n| n.get())
@@ -99,22 +99,22 @@ pub fn run(opts: DoctorOpts) -> anyhow::Result<()> {
     );
     if let Some(dir) = &opts.data_dir {
         let dir: &Path = dir;
-        println!(
+        crate::outln!(
             "data dir:    {} ({})",
             dir.display(),
             crate::health::describe_disk(dir)
         );
         match crate::health::is_on_separate_filesystem(dir) {
             Ok(true) => {
-                println!("mount:       separate filesystem from / (safe for --require-mount)")
+                crate::outln!("mount:       separate filesystem from / (safe for --require-mount)")
             }
             Ok(false) => {
-                println!("mount:       SAME filesystem as / (on a Pi this is the SD card!)")
+                crate::outln!("mount:       SAME filesystem as / (on a Pi this is the SD card!)")
             }
-            Err(e) => println!("mount:       {e:#}"),
+            Err(e) => crate::outln!("mount:       {e:#}"),
         }
     }
-    println!(
+    crate::outln!(
         "systemd:     {}",
         if std::env::var_os("NOTIFY_SOCKET").is_some() {
             "notify socket present"
@@ -124,7 +124,7 @@ pub fn run(opts: DoctorOpts) -> anyhow::Result<()> {
     );
     if let Ok(t) = std::fs::read_to_string("/sys/class/thermal/thermal_zone0/temp") {
         if let Ok(m) = t.trim().parse::<f64>() {
-            println!("cpu temp:    {:.1} C", m / 1000.0);
+            crate::outln!("cpu temp:    {:.1} C", m / 1000.0);
         }
     }
     if let Ok(mem) = std::fs::read_to_string("/proc/meminfo") {
@@ -136,7 +136,7 @@ pub fn run(opts: DoctorOpts) -> anyhow::Result<()> {
                 .map(|kb| human_bytes(kb * 1024))
         };
         if let (Some(t), Some(a)) = (get("MemTotal"), get("MemAvailable")) {
-            println!("memory:      {a} available of {t}");
+            crate::outln!("memory:      {a} available of {t}");
         }
     }
     Ok(())

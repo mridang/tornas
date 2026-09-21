@@ -1,6 +1,21 @@
 //! tornas: a single-binary home media center built on librqbit.
 //! Torrent client + Stremio addon + DLNA server + LRU disk budget.
 
+/// `println!` for CLI output that exits quietly when stdout is closed early, as in
+/// `tornas status | head`. SIGPIPE stays ignored process-wide on purpose: resetting
+/// it would let a peer closing a socket kill the server.
+#[macro_export]
+macro_rules! outln {
+    ($($t:tt)*) => {{
+        use std::io::Write as _;
+        if let Err(e) = writeln!(std::io::stdout(), $($t)*) {
+            if e.kind() == std::io::ErrorKind::BrokenPipe {
+                std::process::exit(0);
+            }
+        }
+    }};
+}
+
 pub mod budget;
 pub mod catalog;
 pub mod config;
@@ -58,8 +73,13 @@ async fn status_loop(engine: Arc<Engine>) {
         }
         if let Ok(st) = engine.status() {
             let downloading = st.movies.iter().filter(|m| !m.finished).count();
+            let paused = match (st.pause.paused, st.pause.remaining_secs) {
+                (false, _) => String::new(),
+                (true, Some(r)) => format!("PAUSED, resumes in {}; ", units::human_age(r)),
+                (true, None) => "PAUSED until resumed; ".to_owned(),
+            };
             let line = format!(
-                "{} movies ({} downloading), {} / {} used, down {} up {}, {} peers",
+                "{paused}{} movies ({} downloading), {} / {} used, down {} up {}, {} peers",
                 st.movies.len(),
                 downloading,
                 units::human_bytes(st.budget.used),
@@ -126,6 +146,7 @@ pub async fn run_server(
     tokio::spawn(engine.clone().sweep_forever());
     tokio::spawn(watchdog::run(engine.clone()));
     tokio::spawn(status_loop(engine.clone()));
+    tokio::spawn(engine.clone().pause_watch_forever());
     if let Some(iv) = opts.auto_update {
         tokio::spawn(update::auto_update_forever(
             engine.clone(),

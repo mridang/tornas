@@ -230,7 +230,7 @@ pub async fn seeder(
 pub async fn run_seed(opts: SeedOpts) -> anyhow::Result<()> {
     let session = seeder(&opts.dir, opts.listen).await?;
     // Print a line the demo script and humans can read.
-    println!(
+    crate::outln!(
         "seeding on {}",
         session
             .listen_addr()

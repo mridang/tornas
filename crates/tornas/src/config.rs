@@ -126,6 +126,11 @@ pub enum Command {
     Doctor(DoctorOpts),
     /// Show recent server log lines (from the in-memory ring, no journal needed).
     Logs(LogsOpts),
+    /// Pause every torrent now. Resumes automatically after the configured
+    /// duration (default 3h) unless `--indefinite`.
+    Pause(PauseOpts),
+    /// Resume after a pause.
+    Resume(ResumeOpts),
 }
 
 #[derive(Args, Debug, Clone)]
@@ -155,6 +160,10 @@ pub struct ServerOpts {
     /// so it uses no upload bandwidth; it still streams from disk.
     #[arg(long, env = "TORNAS_KEEP_SEEDING")]
     pub keep_seeding: bool,
+
+    /// How long "pause everything" lasts before resuming on its own.
+    #[arg(long, env = "TORNAS_PAUSE_DURATION", default_value = "3h", value_parser = humantime::parse_duration)]
+    pub pause_duration: Duration,
 
     /// How often the background sweep re-checks the budget.
     #[arg(long, env = "TORNAS_SWEEP_INTERVAL", default_value = "5m", value_parser = humantime::parse_duration)]
@@ -429,4 +438,30 @@ pub struct LogsOpts {
     /// Minimum level: error, warn, info, debug, trace.
     #[arg(long)]
     pub level: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct PauseOpts {
+    /// Server base URL.
+    #[arg(long, env = "TORNAS_SERVER", default_value = "http://127.0.0.1:3030")]
+    pub server: String,
+    /// API token if the server has one.
+    #[arg(long, env = "TORNAS_API_TOKEN", hide_env_values = true)]
+    pub token: Option<String>,
+    /// Pause for this long instead of the server's default, e.g. 30m, 12h.
+    #[arg(long = "for", value_parser = humantime::parse_duration, conflicts_with = "indefinite")]
+    pub duration: Option<Duration>,
+    /// Stay paused until explicitly resumed.
+    #[arg(long)]
+    pub indefinite: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ResumeOpts {
+    /// Server base URL.
+    #[arg(long, env = "TORNAS_SERVER", default_value = "http://127.0.0.1:3030")]
+    pub server: String,
+    /// API token if the server has one.
+    #[arg(long, env = "TORNAS_API_TOKEN", hide_env_values = true)]
+    pub token: Option<String>,
 }

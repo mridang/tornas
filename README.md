@@ -106,6 +106,7 @@ JSON over HTTP. Writes need `Authorization: Bearer <TORNAS_API_TOKEN>` when a to
 | DELETE | `/api/movies/{imdb_id}` | remove and delete files → 204 |
 | GET | `/api/budget`, `/api/session`, `/api/events?limit=`, `/api/status`, `/api/config` | read-only system resources |
 | GET/POST | `/api/trackers` | public tracker feed status / refresh now |
+| GET/PUT/DELETE | `/api/pause` | read, start (optional `{duration, indefinite}`), or lift the global pause |
 | GET | `/api/logs?since=&limit=&level=` | recent log lines (token-protected when a token is set) |
 | GET | `/metrics`, `/healthz` | Prometheus, liveness |
 | GET | `/manifest.json`, `/catalog/movie/local.json`, `/meta/movie/{id}.json`, `/stream/movie/{id}.json` | Stremio addon protocol |
@@ -125,6 +126,7 @@ tornas status          # one-shot table
 tornas status --json   # raw JSON
 tornas top             # live dashboard, q to quit
 tornas health          # exit 0/1 for scripts
+tornas pause / resume  # the kill switch
 tornas doctor          # CPU hashing support, disk placement, temperature
 ```
 
@@ -153,6 +155,31 @@ Logs go to stdout (journald under systemd, `docker logs` in a container). Option
 | `--log-keep` | `TORNAS_LOG_KEEP` | `7` | rotated files to keep |
 
 The server also keeps the last 2000 lines in memory. `tornas logs -n 200`, `--follow`, `--level warn` reads them over the API from anywhere (needs the API token when one is set), so a Synology box without journal access is still debuggable. `GET /api/logs?since=<seq>&limit=&level=` is the underlying endpoint.
+
+## Dashboard
+
+Open `http://<host>:3030/` (or `http://tornas.local:3030/` via mDNS, or the Tailscale name) for a single-page dashboard: transfer rates, peers, the disk budget, the library with posters and progress, an add form, one-click Stremio install and play links, and recent activity. It works on a phone, follows the system light or dark theme, and loads nothing from the internet except TMDB posters, so it works on a box with no connectivity. It is served with a strict Content Security Policy and never inserts data as HTML.
+
+## Pause everything
+
+If something goes wrong, the big **Pause everything** button at the top of the dashboard stops all downloads, uploads and tracker traffic at once. Pick how long (30 minutes, 1 hour, 3 hours, 12 hours, or until you resume); it resumes by itself when the time runs out, with a live countdown until then. You can add an hour or make it indefinite while paused. Streaming what is already on disk keeps working.
+
+The pause is deliberately hard to escape by accident: new movies are refused (no magnet lookups happen), anything that comes loose is re-paused every few seconds, and the state is written to disk atomically, so a crash, restart or power cut mid-pause stays paused. Finished movies stay paused on resume unless `--keep-seeding` is set.
+
+| Flag | Env | Default |
+|---|---|---|
+| `--pause-duration` | `TORNAS_PAUSE_DURATION` | `3h` |
+
+Also over SSH or scripts:
+
+```bash
+tornas pause                 # default duration
+tornas pause --for 30m
+tornas pause --indefinite
+tornas resume
+```
+
+And over HTTP: `GET /api/pause`, `PUT /api/pause` with an optional body `{"duration": "3h"}` or `{"indefinite": true}`, `DELETE /api/pause`. `systemctl status tornas` and `tornas status` both show `PAUSED` with the time left, and metrics expose `tornas_paused`, `tornas_pause_remaining_seconds`, `tornas_pauses_total` and `tornas_resumes_total{trigger}`.
 
 ## Access control
 
@@ -188,6 +215,7 @@ Per-torrent series carry only an `imdb_id` label; the descriptive fields (info h
 | Peers and transfer | `tornas_fetched_bytes_total`, `tornas_uploaded_bytes_total`, `tornas_download_bytes_per_second`, `tornas_upload_bytes_per_second`, `tornas_peers{state}`, `tornas_peers_live{transport}`, `tornas_peer_connections_total{transport,family,outcome}`, `tornas_peer_steals_total`, `tornas_blocked_connections_total{direction}` |
 | DHT (UDP) | `tornas_dht_enabled`, `tornas_dht_nodes{family}`, `tornas_dht_outstanding_requests` |
 | Tracker feed | `tornas_trackers_enabled`, `tornas_trackers_active{scheme}`, `tornas_tracker_list_age_seconds`, `tornas_tracker_list_rejected`, `tornas_tracker_list_deduplicated`, `tornas_tracker_source_up{source}`, `tornas_tracker_source_accepted{source}` |
+| Pause | `tornas_paused`, `tornas_pause_remaining_seconds`, `tornas_pauses_total`, `tornas_resumes_total{trigger}` |
 | Events | `tornas_adds_total{result}`, `tornas_evictions_total`, `tornas_evicted_bytes_total`, `tornas_stalled_evictions_total`, `tornas_removals_total`, `tornas_seeding_paused_total`, `tornas_streams_total{kind}`, `tornas_stream_bytes_total`, `tornas_tmdb_errors_total`, `tornas_updates_installed_total` |
 | HTTP | `tornas_http_requests_total{route,method,status}`, `tornas_http_request_duration_seconds{route}` (histogram), `tornas_unauthorized_total`, `tornas_forbidden_source_total` |
 

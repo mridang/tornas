@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>tornas</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237b5cff'/%3E%3Cpath d='M12 9l12 7-12 7z' fill='white'/%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#0b0d12;--panel:#141821;--panel2:#1b2030;--border:#262c3b;--text:#e7e9ee;--muted:#9aa3b2;
+  --accent:#7b5cff;--accent-2:#9d86ff;--ok:#2fbf71;--warn:#f5a524;--bad:#f04438;--info:#4c8dff;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.25);--radius:14px;
+}
+@media (prefers-color-scheme: light){
+  :root{--bg:#f5f6fa;--panel:#fff;--panel2:#f0f2f7;--border:#e2e5ee;--text:#151922;--muted:#5d6677;
+  --shadow:0 1px 2px rgba(20,25,40,.06),0 8px 24px rgba(20,25,40,.06);}
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);
+  font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,Cantarell,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:var(--accent-2);text-decoration:none}a:hover{text-decoration:underline}
+button,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.wrap{max-width:1240px;margin:0 auto;padding:20px 16px 48px}
+.muted{color:var(--muted)}.small{font-size:13px}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.grow{flex:1}
+
+/* header */
+header.top{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.logo{width:36px;height:36px;border-radius:10px;background:var(--accent);display:grid;place-items:center;flex:none;box-shadow:var(--shadow)}
+.logo svg{width:16px;height:16px}
+.brand b{font-size:19px;letter-spacing:-.01em}.brand .small{display:block;margin-top:-2px}
+.pill{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:999px;font-size:13px;font-weight:600;
+  background:var(--panel);border:1px solid var(--border)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 25%,transparent)}
+.pill.paused .dot{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 25%,transparent)}
+.pill.down .dot{background:var(--bad);box-shadow:none}
+
+/* cards */
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
+.card h2{font-size:15px;margin:0 0 12px;letter-spacing:.01em}
+.card h2 .muted{font-weight:400}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--border);background:var(--panel2);
+  padding:8px 14px;border-radius:10px;cursor:pointer;font-weight:600;font-size:14px;white-space:nowrap;text-decoration:none!important;color:var(--text)}
+.btn:hover{border-color:var(--muted)}.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:var(--accent-2)}
+.btn.warn{background:var(--warn);border-color:var(--warn);color:#1a1300}
+.btn.ok{background:var(--ok);border-color:var(--ok);color:#04150b}
+.btn.ghost{background:transparent}
+.btn.danger{color:var(--bad)}.btn.danger:hover{border-color:var(--bad)}
+.btn.sm{padding:5px 10px;font-size:13px;border-radius:8px}
+.btn.big{padding:14px 22px;font-size:16px;border-radius:12px}
+
+/* kill switch */
+.hero{margin-bottom:16px;display:grid;grid-template-columns:1fr auto;gap:18px;align-items:center}
+.hero.paused{border-color:color-mix(in srgb,var(--warn) 55%,var(--border));
+  background:linear-gradient(135deg,color-mix(in srgb,var(--warn) 14%,var(--panel)),var(--panel) 60%)}
+.hero h1{font-size:22px;margin:0 0 4px;letter-spacing:-.01em}
+.hero p{margin:0}
+.countdown{font:700 38px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.02em;color:var(--warn);margin:8px 0 4px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.chip{border:1px solid var(--border);background:var(--panel2);border-radius:999px;padding:5px 12px;font-size:13px;cursor:pointer;font-weight:600}
+.chip[aria-pressed="true"]{background:color-mix(in srgb,var(--accent) 22%,var(--panel2));border-color:var(--accent);color:var(--text)}
+.hero-actions{display:flex;flex-direction:column;gap:8px;align-items:stretch;min-width:220px}
+
+/* warnings */
+.warn-banner{display:flex;gap:10px;align-items:flex-start;padding:11px 14px;border-radius:12px;margin-bottom:10px;
+  background:color-mix(in srgb,var(--warn) 12%,var(--panel));border:1px solid color-mix(in srgb,var(--warn) 45%,var(--border));font-size:14px}
+.warn-banner::before{content:"!";flex:none;width:20px;height:20px;border-radius:50%;background:var(--warn);color:#1a1300;
+  font-weight:800;display:grid;place-items:center;font-size:13px;margin-top:1px}
+
+/* tiles */
+.tiles{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:16px 0}
+.tile{padding:14px 16px}
+.tile .k{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}
+.tile .v{font-size:24px;font-weight:700;letter-spacing:-.02em;margin-top:2px;font-variant-numeric:tabular-nums}
+.tile .s{font-size:12.5px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile.wide{grid-column:span 2}
+.bar{height:8px;background:var(--panel2);border-radius:999px;overflow:hidden;margin-top:8px}
+.bar>i{display:block;height:100%;background:var(--ok);border-radius:999px;transition:width .5s ease}
+
+/* layout */
+.main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px}
+aside{display:flex;flex-direction:column;gap:16px}
+
+/* library */
+.lib-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.lib-head h2{margin:0}
+.seg{display:inline-flex;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:3px;gap:2px}
+.seg button{border:0;background:transparent;padding:5px 11px;border-radius:7px;cursor:pointer;font-size:13px;font-weight:600;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--panel);color:var(--text);box-shadow:var(--shadow)}
+.movies{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
+.movie{display:grid;grid-template-columns:78px 1fr;gap:12px;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--panel2);min-width:0}
+.poster{width:78px;aspect-ratio:2/3;border-radius:8px;object-fit:cover;background:linear-gradient(135deg,var(--accent),#3a2a8a);display:block}
+.poster.ph{display:grid;place-items:center;color:#fff;font-weight:800;font-size:20px}
+.movie .t{font-weight:700;line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.movie .t .muted{font-weight:500}
+.badges{display:flex;gap:5px;flex-wrap:wrap;margin:6px 0}
+.badge{font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--panel);border:1px solid var(--border);color:var(--muted);text-transform:capitalize}
+.badge.s-downloading{color:var(--info);border-color:color-mix(in srgb,var(--info) 45%,var(--border))}
+.badge.s-done,.badge.s-seeding{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,var(--border))}
+.badge.s-checking{color:var(--accent-2);border-color:color-mix(in srgb,var(--accent) 45%,var(--border))}
+.badge.s-paused{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,var(--border))}
+.badge.s-error,.badge.s-missing{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,var(--border))}
+.badge.watch{color:var(--accent-2)}
+.movie .meta{font-size:12.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+.movie .bar{height:6px;margin:6px 0 2px}.movie .bar>i{background:var(--info)}
+.movie .actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.empty{text-align:center;padding:36px 16px;color:var(--muted)}
+.empty b{display:block;color:var(--text);font-size:16px;margin-bottom:4px}
+
+/* forms */
+label{display:block;font-size:13px;font-weight:600;margin:0 0 5px}
+input[type=text]{width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;outline:none}
+input[type=text]:focus{border-color:var(--accent)}
+.field{margin-bottom:11px}
+.err{color:var(--bad);font-size:13px;margin-top:8px;min-height:1em}
+.okmsg{color:var(--ok);font-size:13px;margin-top:8px}
+
+/* events */
+.events{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px;max-height:360px;overflow:auto}
+.events li{display:grid;grid-template-columns:10px 1fr auto;gap:10px;align-items:baseline;font-size:13.5px}
+.events .d{width:8px;height:8px;border-radius:50%;background:var(--muted);transform:translateY(-1px)}
+.events .k-add .d{background:var(--info)}.events .k-evict .d,.events .k-stalled .d{background:var(--warn)}
+.events .k-done .d,.events .k-resume .d{background:var(--ok)}.events .k-pause .d{background:var(--warn)}
+.events .k-remove .d{background:var(--bad)}
+.events .when{color:var(--muted);font-size:12px;white-space:nowrap}
+
+.copy{display:flex;gap:6px}.copy input{font-family:ui-monospace,Menlo,monospace;font-size:12.5px}
+footer{margin-top:28px;display:flex;gap:16px;flex-wrap:wrap;color:var(--muted);font-size:13px}
+
+/* modal */
+dialog{border:1px solid var(--border);border-radius:var(--radius);background:var(--panel);color:var(--text);box-shadow:var(--shadow);padding:20px;max-width:420px;width:calc(100% - 32px)}
+dialog::backdrop{background:rgba(0,0,0,.55);backdrop-filter:blur(2px)}
+dialog h3{margin:0 0 8px}
+
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(20px);opacity:0;background:var(--panel);
+  border:1px solid var(--border);box-shadow:var(--shadow);padding:10px 16px;border-radius:12px;font-size:14px;transition:.25s;pointer-events:none;z-index:9}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+@media (max-width:1080px){.tiles{grid-template-columns:repeat(3,1fr)}.main{grid-template-columns:1fr}}
+@media (max-width:640px){
+  .tiles{grid-template-columns:repeat(2,1fr)}.tile.wide{grid-column:span 2}
+  .hero{grid-template-columns:1fr}.hero-actions{min-width:0}
+  .countdown{font-size:32px}.movies{grid-template-columns:1fr}
+  header.top .pill{margin-left:auto}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="logo" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M5 3l8 5-8 5z" fill="#fff"/></svg></div>
+    <div class="brand"><b>tornas</b><span class="small muted" id="host">connecting&hellip;</span></div>
+    <div class="grow"></div>
+    <span class="pill" id="pill" role="status" aria-live="polite"><span class="dot"></span><span id="pill-text">Connecting</span></span>
+  </header>
+
+  <!-- The kill switch -->
+  <section class="card hero" id="hero" aria-live="polite">
+    <div id="hero-body"></div>
+    <div class="hero-actions" id="hero-actions"></div>
+  </section>
+
+  <div id="warnings"></div>
+
+  <section class="tiles" aria-label="Summary">
+    <div class="card tile"><div class="k">Download</div><div class="v" id="t-down">&ndash;</div><div class="s" id="t-down-s">&nbsp;</div></div>
+    <div class="card tile"><div class="k">Upload</div><div class="v" id="t-up">&ndash;</div><div class="s" id="t-up-s">&nbsp;</div></div>
+    <div class="card tile"><div class="k">Peers</div><div class="v" id="t-peers">&ndash;</div><div class="s" id="t-peers-s">&nbsp;</div></div>
+    <div class="card tile"><div class="k">Movies</div><div class="v" id="t-movies">&ndash;</div><div class="s" id="t-movies-s">&nbsp;</div></div>
+    <div class="card tile wide"><div class="k">Disk budget</div>
+      <div class="row"><div class="v" id="t-budget">&ndash;</div><div class="grow"></div><div class="s" id="t-free"></div></div>
+      <div class="bar"><i id="t-bar" style="width:0"></i></div><div class="s" id="t-next">&nbsp;</div></div>
+  </section>
+
+  <div class="main">
+    <section class="card" aria-labelledby="lib-h">
+      <div class="lib-head">
+        <h2 id="lib-h">Library</h2>
+        <div class="grow"></div>
+        <div class="seg" role="group" aria-label="Filter">
+          <button data-f="all" aria-pressed="true">All</button>
+          <button data-f="active" aria-pressed="false">In progress</button>
+          <button data-f="ready" aria-pressed="false">Ready</button>
+        </div>
+      </div>
+      <div class="movies" id="movies"></div>
+    </section>
+
+    <aside>
+      <section class="card" aria-labelledby="add-h">
+        <h2 id="add-h">Add a movie</h2>
+        <form id="add" autocomplete="off">
+          <div class="field"><label for="imdb">IMDb id</label><input type="text" id="imdb" placeholder="tt0111161" pattern="tt[0-9]+" required></div>
+          <div class="field"><label for="src">Magnet link or .torrent URL</label><input type="text" id="src" placeholder="magnet:?xt=urn:btih:&hellip;" required></div>
+          <button class="btn primary" type="submit" id="add-btn" style="width:100%">Add to library</button>
+          <div class="err" id="add-err"></div>
+        </form>
+      </section>
+
+      <section class="card" aria-labelledby="st-h">
+        <h2 id="st-h">Stremio</h2>
+        <p class="small muted" style="margin:0 0 10px">Install the addon, then open Discover &rarr; Movies &rarr; Local Library.</p>
+        <div class="row" style="margin-bottom:10px">
+          <a class="btn primary sm" id="st-app" href="#">Install in app</a>
+          <a class="btn sm" id="st-web" href="#" target="_blank" rel="noopener noreferrer">Install on web</a>
+        </div>
+        <div class="copy"><input type="text" id="manifest" readonly aria-label="Manifest URL"><button class="btn sm" id="copy" type="button">Copy</button></div>
+      </section>
+
+      <section class="card" aria-labelledby="ev-h">
+        <h2 id="ev-h">Activity</h2>
+        <ul class="events" id="events"></ul>
+      </section>
+    </aside>
+  </div>
+
+  <footer>
+    <a href="/metrics">Prometheus metrics</a>
+    <a href="/api/openapi.json">API (OpenAPI)</a>
+    <a href="/api/status">Status JSON</a>
+    <span class="grow"></span>
+    <span id="updated"></span>
+  </footer>
+</div>
+
+<dialog id="token-dlg">
+  <form method="dialog">
+    <h3>API token required</h3>
+    <p class="small muted">This server protects changes with <span class="mono">TORNAS_API_TOKEN</span>. Enter it once; it is kept in this browser only.</p>
+    <div class="field"><input type="text" id="token-in" autocomplete="off" aria-label="API token"></div>
+    <div class="row"><div class="grow"></div><button class="btn ghost" value="cancel">Cancel</button><button class="btn primary" value="ok">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="confirm-dlg">
+  <form method="dialog">
+    <h3 id="confirm-title"></h3>
+    <p class="small muted" id="confirm-body"></p>
+    <div class="row"><div class="grow"></div><button class="btn ghost" value="cancel">Cancel</button><button class="btn danger" value="ok" id="confirm-ok">Remove</button></div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+// ---------- tiny DOM helper: text only, never innerHTML with data ----------
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? "" : String(v));
+  }
+  for (const k of kids.flat()) if (k != null && k !== false) el.append(k instanceof Node ? k : document.createTextNode(String(k)));
+  return el;
+}
+const $ = (id) => document.getElementById(id);
+
+// ---------- formatting ----------
+function bytes(n) {
+  if (!Number.isFinite(n)) return "–";
+  const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i ? n.toFixed(n < 10 ? 1 : 0) : Math.round(n)) + " " + u[i];
+}
+const rate = (n) => bytes(n) + "/s";
+function ago(s) {
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+function dur(s) {
+  s = Math.max(0, Math.round(s));
+  const d = Math.floor(s / 86400), hr = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  if (d) return d + "d " + hr + "h";
+  if (hr) return hr + "h " + m + "m";
+  return m + "m";
+}
+function clock(s) {
+  s = Math.max(0, Math.floor(s));
+  const hh = Math.floor(s / 3600), mm = Math.floor(s % 3600 / 60), ss = s % 60;
+  return hh + ":" + String(mm).padStart(2, "0") + ":" + String(ss).padStart(2, "0");
+}
+const now = () => Math.floor(Date.now() / 1000);
+
+// ---------- API with optional bearer token ----------
+let token = null;
+try { token = localStorage.getItem("tornas_token"); } catch (_) {}
+async function askToken() {
+  const dlg = $("token-dlg"); $("token-in").value = token || "";
+  dlg.showModal();
+  return new Promise((res) => dlg.addEventListener("close", () => {
+    if (dlg.returnValue === "ok" && $("token-in").value.trim()) {
+      token = $("token-in").value.trim();
+      try { localStorage.setItem("tornas_token", token); } catch (_) {}
+      res(true);
+    } else res(false);
+  }, { once: true }));
+}
+async function api(method, path, body, retried) {
+  const headers = {};
+  if (body !== undefined) headers["content-type"] = "application/json";
+  if (token) headers["authorization"] = "Bearer " + token;
+  const r = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  if (r.status === 401 && !retried) { if (await askToken()) return api(method, path, body, true); }
+  let data = null; try { data = await r.json(); } catch (_) {}
+  if (!r.ok) throw new Error(data && data.error ? data.error.message : r.status + " " + r.statusText);
+  return data;
+}
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove("show"), 2600);
+}
+
+// ---------- state ----------
+let S = null, config = null, filter = "all", pauseDeadline = null, lastOk = 0;
+let chosen = null; // selected pause duration in seconds, or "indefinite"
+const PRESETS = [[1800, "30 min"], [3600, "1 hour"], [10800, "3 hours"], [43200, "12 hours"], ["indefinite", "Until I resume"]];
+
+// ---------- kill switch ----------
+async function doPause(val) {
+  try {
+    const body = val === "indefinite" ? { indefinite: true } : { duration: val };
+    await api("PUT", "/api/pause", body);
+    toast("Everything paused"); refresh();
+  } catch (e) { toast(e.message); }
+}
+async function doResume() {
+  try { const r = await api("DELETE", "/api/pause"); toast("Resumed " + (r.resumed || 0) + " torrents"); refresh(); }
+  catch (e) { toast(e.message); }
+}
+let heroKey = null;
+function activeText(n) {
+  return (n ? n + " downloading. " : "Nothing downloading. ") +
+    "If something goes wrong, pause everything; it resumes on its own after the time you pick.";
+}
+// Rebuilt only when the pause state or the chosen preset changes, so the buttons
+// are never swapped out from under a click and keyboard focus is kept.
+function renderHero() {
+  const p = S.pause, hero = $("hero"), body = $("hero-body"), act = $("hero-actions");
+  const dflt = p.default_duration_secs;
+  if (chosen === null) chosen = dflt;
+  const active = S.movies.filter((m) => !m.finished).length;
+  const key = JSON.stringify([p.paused, p.indefinite, p.until, chosen, dflt]);
+  if (key === heroKey) {
+    const a = $("hero-active"); if (a) a.textContent = activeText(active);
+    return;
+  }
+  heroKey = key;
+  body.replaceChildren(); act.replaceChildren();
+  if (!p.paused) {
+    hero.classList.remove("paused");
+    body.append(
+      h("h1", {}, "Everything is running"),
+      h("p", { class: "muted", id: "hero-active" }, activeText(active)),
+      h("div", { class: "chips", role: "group", "aria-label": "Pause for" },
+        PRESETS.map(([v, label]) => h("button", {
+          class: "chip", type: "button", "aria-pressed": String(chosen === v),
+          onclick: () => { chosen = v; renderHero(); },
+        }, label + (v === dflt ? " (default)" : "")))),
+    );
+    act.append(h("button", { class: "btn warn big", type: "button", id: "pause-btn", onclick: () => doPause(chosen) }, "Pause everything"));
+  } else {
+    hero.classList.add("paused");
+    const indefinite = p.indefinite;
+    body.append(
+      h("h1", {}, "Everything is paused"),
+      h("p", { class: "muted" }, "No downloads, uploads or tracker traffic. Streaming what is already on disk still works."),
+      indefinite ? h("div", { class: "countdown", style: "font-size:24px" }, "Until you resume")
+                 : h("div", { class: "countdown", id: "cd", "aria-label": "Time until automatic resume" },
+                     clock(pauseDeadline ? (pauseDeadline - Date.now()) / 1000 : p.remaining_secs)),
+      !indefinite && p.until ? h("p", { class: "small muted" }, "Resumes automatically at " +
+        new Date(p.until * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })) : null,
+    );
+    act.append(
+      h("button", { class: "btn ok big", type: "button", id: "resume-btn", onclick: doResume }, "Resume now"),
+      indefinite ? null : h("button", { class: "btn", type: "button", onclick: () => doPause((p.remaining_secs || 0) + 3600) }, "Add 1 hour"),
+      indefinite ? h("button", { class: "btn", type: "button", onclick: () => doPause(dflt) }, "Resume in " + dur(dflt))
+                 : h("button", { class: "btn ghost", type: "button", onclick: () => doPause("indefinite") }, "Keep paused until I resume"),
+    );
+  }
+}
+
+// ---------- render ----------
+function renderHeader() {
+  $("host").textContent = S.hostname + " · v" + S.version + " · up " + dur(S.session.uptime_secs);
+  const pill = $("pill"), txt = $("pill-text");
+  pill.className = "pill" + (S.pause.paused ? " paused" : "");
+  txt.textContent = S.pause.paused ? "Paused" : "Running";
+  document.title = (S.pause.paused ? "Paused · " : "") + "tornas";
+}
+function renderTiles() {
+  const s = S.session, b = S.budget, ms = S.movies;
+  $("t-down").textContent = rate(s.download_bps);
+  $("t-up").textContent = rate(s.upload_bps);
+  $("t-down-s").textContent = ms.filter((m) => m.download_bps > 0).length + " active";
+  $("t-up-s").textContent = ms.some((m) => m.state === "seeding") ? "seeding" : "not seeding";
+  $("t-peers").textContent = s.peers_live;
+  $("t-peers-s").textContent = s.torrents + " torrents loaded";
+  $("t-movies").textContent = ms.length;
+  const ready = ms.filter((m) => m.finished).length;
+  $("t-movies-s").textContent = ready + " ready · " + (ms.length - ready) + " in progress";
+  $("t-budget").textContent = bytes(b.used) + " / " + bytes(b.limit);
+  $("t-free").textContent = bytes(b.disk_free) + " free on disk";
+  const ratio = b.limit ? Math.min(1, b.used / b.limit) : 0, bar = $("t-bar");
+  bar.style.width = (ratio * 100).toFixed(1) + "%";
+  bar.style.background = ratio > .9 ? "var(--bad)" : ratio > .75 ? "var(--warn)" : "var(--ok)";
+  $("t-next").textContent = b.next_eviction ? "Next to evict: " + b.next_eviction.title : "Nothing due for eviction";
+}
+function renderWarnings() {
+  $("warnings").replaceChildren(...(S.warnings || []).map((w) => h("div", { class: "warn-banner" }, w)));
+}
+function poster(m) {
+  const initials = (m.title || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+  const ph = h("div", { class: "poster ph", "aria-hidden": "true" }, initials);
+  if (!m.poster_url) return ph;
+  const img = h("img", { class: "poster", src: m.poster_url, alt: "", loading: "lazy", referrerpolicy: "no-referrer" });
+  img.addEventListener("error", () => img.replaceWith(ph), { once: true });
+  return img;
+}
+const plural = (n, one, many) => n + " " + (n === 1 ? one : many);
+const cards = new Map();
+function buildCard(m) {
+  const r = {};
+  const el = h("article", { class: "movie" },
+    poster(m),
+    h("div", { style: "min-width:0" },
+      r.title = h("div", { class: "t" }),
+      h("div", { class: "badges" },
+        r.state = h("span", { class: "badge" }),
+        r.size = h("span", { class: "badge" }),
+        r.inuse = h("span", { class: "badge watch", title: "Streamed recently, so it will not be evicted" }, "in use")),
+      r.bar = h("div", { class: "bar", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": 100, "aria-label": "Download progress" },
+        r.fill = h("i")),
+      r.meta = h("div", { class: "meta" }),
+      h("div", { class: "actions" },
+        r.play = h("a", { class: "btn primary sm" }, "Play"),
+        r.web = h("a", { class: "btn sm", target: "_blank", rel: "noopener noreferrer" }, "Web"),
+        r.file = h("a", { class: "btn sm ghost", title: "Direct video link for VLC or a browser" }, "File"),
+        h("button", { class: "btn sm ghost danger", type: "button", onclick: () => removeMovie(el._m) }, "Remove"),
+      ),
+    ),
+  );
+  el._r = r;
+  return el;
+}
+function updateCard(el, m) {
+  el._m = m;
+  const r = el._r;
+  const base = config && config.public_url ? config.public_url.replace(/\/$/, "") : location.origin;
+  const pct = m.total_bytes ? Math.floor(m.progress_bytes / m.total_bytes * 100) : 0;
+  const file = m.torrent ? m.torrent.video_file_name : "";
+  r.title.title = m.title;
+  r.title.replaceChildren(m.title, m.year ? h("span", { class: "muted" }, " (" + m.year + ")") : "");
+  r.state.className = "badge s-" + m.state;
+  r.state.textContent = m.state;
+  r.size.textContent = bytes(m.total_bytes);
+  r.inuse.hidden = !m.protected;
+  r.bar.hidden = m.finished;
+  r.bar.setAttribute("aria-valuenow", pct);
+  r.fill.style.width = pct + "%";
+  const meta = m.finished ? [bytes(m.total_bytes)]
+    : m.state === "paused" ? [pct + "% verified", "paused"]
+    : [pct + "%", rate(m.download_bps), plural(m.peers, "peer", "peers")];
+  meta.push("watched " + ago(now() - m.last_used_at));
+  r.meta.textContent = meta.join(" · ");
+  r.play.href = "stremio:///detail/movie/" + m.imdb_id + "/" + m.imdb_id;
+  r.web.href = "https://web.stremio.com/#/detail/movie/" + m.imdb_id + "/" + m.imdb_id;
+  r.file.href = base + "/video/" + encodeURIComponent(m.imdb_id) + (file ? "/" + encodeURIComponent(file) : "");
+}
+function renderMovies() {
+  const box = $("movies");
+  const list = S.movies.filter((m) => filter === "all" || (filter === "active" ? !m.finished : m.finished));
+  const note = box.querySelector(".empty");
+  if (!list.length) {
+    for (const el of cards.values()) el.remove();
+    cards.clear();
+    const msg = S.movies.length
+      ? h("div", { class: "empty", style: "grid-column:1/-1" }, "Nothing matches this filter.")
+      : h("div", { class: "empty", style: "grid-column:1/-1" }, h("b", {}, "No movies yet"), "Add one with an IMDb id and a magnet link.");
+    box.replaceChildren(msg);
+    return;
+  }
+  if (note) note.remove();
+  const want = new Set(list.map((m) => m.imdb_id));
+  for (const [id, el] of cards) if (!want.has(id)) { el.remove(); cards.delete(id); }
+  let prev = null;
+  for (const m of list) {
+    let el = cards.get(m.imdb_id);
+    if (!el) { el = buildCard(m); cards.set(m.imdb_id, el); }
+    updateCard(el, m);
+    const expected = prev ? prev.nextSibling : box.firstChild;
+    if (el !== expected) box.insertBefore(el, expected); // only moves when order changed
+    prev = el;
+  }
+}
+function renderEvents() {
+  const t = now();
+  $("events").replaceChildren(...(S.events || []).slice(0, 25).map((e) =>
+    h("li", { class: "k-" + e.kind }, h("span", { class: "d", "aria-hidden": "true" }), h("span", {}, e.message), h("span", { class: "when" }, ago(t - e.ts)))));
+  if (!S.events || !S.events.length) $("events").append(h("li", {}, h("span"), h("span", { class: "muted" }, "Nothing yet"), h("span")));
+}
+function renderAdd() {
+  const paused = S.pause.paused;
+  $("add-btn").disabled = paused;
+  $("add-btn").textContent = paused ? "Paused: resume to add" : "Add to library";
+}
+
+async function removeMovie(m) {
+  $("confirm-title").textContent = "Remove " + m.title + "?";
+  $("confirm-body").textContent = "This deletes the downloaded file (" + bytes(m.total_bytes) + ") and removes it from Stremio and DLNA.";
+  const dlg = $("confirm-dlg"); dlg.showModal();
+  dlg.addEventListener("close", async () => {
+    if (dlg.returnValue !== "ok") return;
+    try { await api("DELETE", "/api/movies/" + encodeURIComponent(m.imdb_id)); toast("Removed " + m.title); refresh(); }
+    catch (e) { toast(e.message); }
+  }, { once: true });
+}
+
+$("add").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const imdb = $("imdb").value.trim(), src = $("src").value.trim(), err = $("add-err");
+  err.textContent = ""; err.className = "err";
+  const body = { imdb_id: imdb };
+  if (src.startsWith("magnet:")) body.magnet = src;
+  else if (/^https?:\/\//.test(src)) body.torrent_url = src;
+  else { err.textContent = "Paste a magnet link or an http(s) link to a .torrent file."; return; }
+  const btn = $("add-btn"); btn.disabled = true; btn.textContent = "Looking up metadata…";
+  try {
+    const m = await api("POST", "/api/movies", body);
+    err.className = "okmsg"; err.textContent = "Added " + m.title + (m.year ? " (" + m.year + ")" : "");
+    $("imdb").value = ""; $("src").value = ""; refresh();
+  } catch (e) { err.textContent = e.message; }
+  finally { btn.disabled = false; renderAdd(); }
+});
+
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
+  filter = b.dataset.f;
+  document.querySelectorAll(".seg button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  if (S) renderMovies();
+}));
+
+function setupStremio() {
+  const base = config && config.public_url ? config.public_url.replace(/\/$/, "") : location.origin;
+  const manifest = base + "/manifest.json";
+  $("manifest").value = manifest;
+  $("st-app").href = manifest.replace(/^https?:\/\//, "stremio://");
+  $("st-web").href = "https://web.stremio.com/#/addons?addon=" + encodeURIComponent(manifest);
+}
+$("copy").addEventListener("click", async () => {
+  const inp = $("manifest");
+  try { await navigator.clipboard.writeText(inp.value); toast("Manifest URL copied"); }
+  catch (_) { inp.select(); document.execCommand && document.execCommand("copy"); toast("Manifest URL selected"); }
+});
+
+// ---------- loop ----------
+async function refresh() {
+  try {
+    const st = await api("GET", "/api/status");
+    S = st; lastOk = Date.now();
+    pauseDeadline = S.pause.paused && S.pause.remaining_secs != null ? Date.now() + S.pause.remaining_secs * 1000 : null;
+    renderHeader(); renderHero(); renderWarnings(); renderTiles(); renderMovies(); renderEvents(); renderAdd();
+    $("updated").textContent = "Updated " + new Date().toLocaleTimeString();
+  } catch (e) {
+    $("pill").className = "pill down"; $("pill-text").textContent = "Unreachable";
+    $("updated").textContent = "Cannot reach the server: " + e.message;
+  }
+}
+setInterval(() => {
+  const cd = $("cd");
+  if (cd && pauseDeadline) {
+    const left = (pauseDeadline - Date.now()) / 1000;
+    cd.textContent = clock(left);
+    if (left <= 0) refresh();
+  }
+}, 1000);
+(async () => {
+  try { config = await api("GET", "/api/config"); } catch (_) { config = null; }
+  setupStremio();
+  await refresh();
+  setInterval(refresh, 3000);
+})();
+</script>
+</body>
+</html>

@@ -19,7 +19,7 @@ use ratatui::{
 use serde_json::Value;
 
 use crate::{
-    config::{ClientOpts, LogsOpts},
+    config::{ClientOpts, LogsOpts, PauseOpts, ResumeOpts},
     units::{human_age, human_bytes, human_rate, now_secs},
 };
 
@@ -105,17 +105,20 @@ const HEADERS: [&str; 9] = [
 pub async fn status(opts: ClientOpts) -> anyhow::Result<()> {
     let v = fetch(&opts.server).await?;
     if opts.json {
-        println!("{}", serde_json::to_string_pretty(&v)?);
+        crate::outln!("{}", serde_json::to_string_pretty(&v)?);
         return Ok(());
     }
     let b = &v["budget"];
-    println!(
+    if let Some(line) = pause_line(&v) {
+        crate::outln!("{line}");
+    }
+    crate::outln!(
         "tornas {} on {}  up {}",
         s(&v, "version"),
         s(&v, "hostname"),
         human_age(u(&v, &["session", "uptime_secs"]) as i64)
     );
-    println!(
+    crate::outln!(
         "budget: {} / {} used, disk free {} (min {}), next eviction: {}",
         human_bytes(u(b, &["used"])),
         human_bytes(u(b, &["limit"])),
@@ -126,7 +129,7 @@ pub async fn status(opts: ClientOpts) -> anyhow::Result<()> {
             .and_then(|t| t.as_str())
             .unwrap_or("none")
     );
-    println!(
+    crate::outln!(
         "session: down {}  up {}  peers {}  torrents {}",
         human_rate(u(&v, &["session", "download_bps"])),
         human_rate(u(&v, &["session", "upload_bps"])),
@@ -137,10 +140,10 @@ pub async fn status(opts: ClientOpts) -> anyhow::Result<()> {
         && !ws.is_empty()
     {
         for w in ws {
-            println!("warning: {}", w.as_str().unwrap_or_default());
+            crate::outln!("warning: {}", w.as_str().unwrap_or_default());
         }
     }
-    println!();
+    crate::outln!();
     let rows = movie_rows(&v);
     let mut widths: Vec<usize> = HEADERS.iter().map(|h| h.len()).collect();
     for r in &rows {
@@ -162,19 +165,19 @@ pub async fn status(opts: ClientOpts) -> anyhow::Result<()> {
             .collect::<Vec<_>>()
             .join("  ")
     };
-    println!(
+    crate::outln!(
         "{}",
         fmt(&HEADERS.iter().map(|h| h.to_string()).collect::<Vec<_>>())
     );
     for r in &rows {
-        println!("{}", fmt(r));
+        crate::outln!("{}", fmt(r));
     }
-    println!();
+    crate::outln!();
     if let Some(events) = v.get("events").and_then(|e| e.as_array()) {
-        println!("recent events:");
+        crate::outln!("recent events:");
         for e in events.iter().take(10) {
             let ts = e.get("ts").and_then(|t| t.as_i64()).unwrap_or(0);
-            println!(
+            crate::outln!(
                 "  {:>5} ago  {:<7} {}",
                 human_age(now_secs() - ts),
                 s(e, "kind"),
@@ -268,6 +271,7 @@ fn draw(f: &mut ratatui::Frame, data: &Result<Value, String>, server: &str) {
             .ratio(ratio),
         chunks[0],
     );
+    let pause_banner = pause_line(v);
     let sess = Line::from(vec![
         Span::styled(
             format!(" {} @ {} ", s(v, "version"), s(v, "hostname")),
@@ -283,8 +287,21 @@ fn draw(f: &mut ratatui::Frame, data: &Result<Value, String>, server: &str) {
             v["session"]["listen_addr"].as_str().unwrap_or("-")
         )),
     ]);
+    let (sess, sess_title) = match &pause_banner {
+        Some(b) => (
+            Line::from(Span::styled(
+                format!(" {b} "),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            " PAUSED ",
+        ),
+        None => (sess, " session "),
+    };
     f.render_widget(
-        Paragraph::new(sess).block(Block::default().borders(Borders::ALL).title(" session ")),
+        Paragraph::new(sess).block(Block::default().borders(Borders::ALL).title(sess_title)),
         chunks[1],
     );
 
@@ -382,7 +399,7 @@ pub async fn logs(opts: LogsOpts) -> anyhow::Result<()> {
         for l in &lines {
             let ts = l["ts"].as_i64().unwrap_or(0);
             let t = chrono_like(ts);
-            println!(
+            crate::outln!(
                 "{t} {:<5} {} {}",
                 s(l, "level"),
                 s(l, "target"),
@@ -402,4 +419,76 @@ pub async fn logs(opts: LogsOpts) -> anyhow::Result<()> {
 fn chrono_like(ts: i64) -> String {
     let s = ts.rem_euclid(86_400);
     format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
+}
+
+/// "PAUSED ..." summary, or None when running.
+fn pause_line(v: &Value) -> Option<String> {
+    let p = v.get("pause")?;
+    if !p.get("paused").and_then(|x| x.as_bool()).unwrap_or(false) {
+        return None;
+    }
+    Some(match p.get("remaining_secs").and_then(|x| x.as_i64()) {
+        Some(r) => format!("PAUSED: everything is paused, resumes in {}", human_age(r)),
+        None => "PAUSED: everything is paused until resumed".to_owned(),
+    })
+}
+
+async fn send(
+    method: reqwest::Method,
+    server: &str,
+    token: Option<&str>,
+    body: Option<serde_json::Value>,
+) -> anyhow::Result<reqwest::Response> {
+    let url = format!("{}/api/pause", server.trim_end_matches('/'));
+    let mut req = reqwest::Client::new()
+        .request(method, &url)
+        .timeout(Duration::from_secs(30));
+    if let Some(t) = token {
+        req = req.bearer_auth(t);
+    }
+    if let Some(b) = body {
+        req = req.json(&b);
+    }
+    let resp = req
+        .send()
+        .await
+        .with_context(|| format!("request to {url} failed"))?;
+    if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        anyhow::bail!("server requires an API token (pass --token or TORNAS_API_TOKEN)");
+    }
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("{status}: {text}");
+    }
+    Ok(resp)
+}
+
+/// `pause`: pause everything now.
+pub async fn pause(o: PauseOpts) -> anyhow::Result<()> {
+    let body = serde_json::json!({
+        "duration": o.duration.map(|d| d.as_secs()),
+        "indefinite": o.indefinite,
+    });
+    let v: Value = send(
+        reqwest::Method::PUT,
+        &o.server,
+        o.token.as_deref(),
+        Some(body),
+    )
+    .await?
+    .json()
+    .await?;
+    match v.get("remaining_secs").and_then(|x| x.as_i64()) {
+        Some(r) => crate::outln!("paused; resumes on its own in {}", human_age(r)),
+        None => crate::outln!("paused until you run `tornas resume`"),
+    }
+    Ok(())
+}
+
+/// `resume`: lift the pause.
+pub async fn resume(o: ResumeOpts) -> anyhow::Result<()> {
+    send(reqwest::Method::DELETE, &o.server, o.token.as_deref(), None).await?;
+    crate::outln!("resumed");
+    Ok(())
 }

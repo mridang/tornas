@@ -122,7 +122,7 @@ pub fn router(engine: AppState, upnp: Option<Router>) -> Router {
     let r = Router::new()
         .route("/", get(index))
         .route("/healthz", get(healthz))
-        .route("/metrics", get(metrics))
+        .route("/metrics", get(prometheus))
         // JSON API
         .route("/api", get(api_root))
         .route("/api/openapi.json", get(openapi))
@@ -136,6 +136,12 @@ pub fn router(engine: AppState, upnp: Option<Router>) -> Router {
         )
         .route("/api/config", get(api_config))
         .route("/api/logs", get(api_logs))
+        .route(
+            "/api/pause",
+            get(api_pause_get)
+                .put(api_pause_put)
+                .delete(api_pause_delete),
+        )
         .route("/api/movies", get(api_list).post(api_add))
         .route(
             "/api/movies/{imdb_id}",
@@ -277,114 +283,29 @@ async fn allow_private_network(
     resp
 }
 
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+/// The dashboard: a single self-contained page that talks to the JSON API. No
+/// external scripts, fonts or styles, so it works on a box with no internet. The
+/// CSP limits it to this origin plus TMDB poster images.
+async fn index() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'self'; img-src 'self' https://image.tmdb.org data:; \
+                 style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; \
+                 connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+            ),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::REFERRER_POLICY, "no-referrer"),
+        ],
+        include_str!("ui.html"),
+    )
 }
 
-/// Human landing page: install links for the Stremio app and web.stremio.com,
-/// plus every movie in the library with play links.
-async fn index(State(e): State<AppState>, headers: HeaderMap) -> ApiResult<impl IntoResponse> {
-    let base = public_base(&e, &headers);
-    let manifest = format!("{base}/manifest.json");
-    let stremio_install =
-        manifest
-            .replacen("http://", "stremio://", 1)
-            .replacen("https://", "stremio://", 1);
-    let web_install = format!(
-        "https://web.stremio.com/#/addons?addon={}",
-        url::form_urlencoded::byte_serialize(manifest.as_bytes()).collect::<String>()
-    );
-    let status = e.status()?;
-    let name = e.opts.dlna_name.clone().unwrap_or_else(|| "Tornas".into());
-
-    let mut rows = String::new();
-    for m in &status.movies {
-        let id = &m.movie.imdb_id;
-        let title = esc(&m.movie.title);
-        let year = m.movie.year.map(|y| y.to_string()).unwrap_or_default();
-        let poster = m
-            .movie
-            .poster_url
-            .as_deref()
-            .map(|p| format!(r#"<img src="{}" alt="">"#, esc(p)))
-            .unwrap_or_default();
-        let pct = (m.progress_bytes * 100)
-            .checked_div(m.total_bytes)
-            .unwrap_or(0);
-        let video = m
-            .torrent
-            .as_ref()
-            .map(|t| {
-                let f: String =
-                    url::form_urlencoded::byte_serialize(t.video_file_name.as_bytes()).collect();
-                format!("{base}/video/{id}/{}", f.replace('+', "%20"))
-            })
-            .unwrap_or_default();
-        rows.push_str(&format!(
-            r#"<li>{poster}<div><h3>{title} <small>{year}</small></h3>
-<p class="meta">{id} · {size} · {pct}% · {state}{prot}</p>
-<p class="links">
-<a class="btn" href="stremio:///detail/movie/{id}/{id}">Play in Stremio app</a>
-<a class="btn" href="https://web.stremio.com/#/detail/movie/{id}/{id}" target="_blank" rel="noopener">Play on web.stremio.com</a>
-<a href="{video}">direct video</a>
-</p></div></li>
-"#,
-            size = crate::units::human_bytes(m.total_bytes),
-            state = esc(&m.state),
-            prot = if m.protected { " · protected" } else { "" },
-        ));
-    }
-    let b = &status.budget;
-    let html = format!(
-        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{name}</title>
-<style>
-body{{font:15px/1.5 system-ui,sans-serif;margin:0;background:#0f1116;color:#e6e6e6}}
-main{{max-width:960px;margin:0 auto;padding:24px 16px}}
-h1{{margin:0 0 4px}} h3{{margin:0 0 4px;font-size:18px}} small{{color:#9aa;font-weight:normal}}
-.card{{background:#1a1d26;border-radius:10px;padding:16px;margin:16px 0}}
-.btn{{display:inline-block;background:#7b5cff;color:#fff;padding:6px 12px;border-radius:6px;text-decoration:none;margin:2px 6px 2px 0}}
-.btn.alt{{background:#2c3040}}
-code{{background:#262a36;padding:2px 6px;border-radius:4px;word-break:break-all}}
-ul{{list-style:none;padding:0;margin:0}} li{{display:flex;gap:16px;padding:12px 0;border-top:1px solid #2a2e3a}}
-li img{{width:80px;height:120px;object-fit:cover;border-radius:6px;flex:none}}
-.meta{{color:#9aa;margin:0 0 6px}} .links a{{margin-right:10px}} p{{margin:4px 0}}
-</style></head><body><main>
-<h1>{name}</h1>
-<p class="meta">{used} of {limit} used · {free} free on disk · {n} movies</p>
-<div class="card"><h3>Add this addon to Stremio</h3>
-<p><a class="btn" href="{stremio_install}">Install in Stremio app</a>
-<a class="btn alt" href="{web_install}" target="_blank" rel="noopener">Install on web.stremio.com</a></p>
-<p>Manifest URL: <code>{manifest}</code></p></div>
-<div class="card"><h3>Library</h3><ul>{rows}</ul></div>
-<p class="meta"><a href="{base}/api/status">JSON status</a> · <code>tornas status</code> on the host</p>
-</main></body></html>"#,
-        name = esc(&name),
-        used = crate::units::human_bytes(b.used),
-        limit = crate::units::human_bytes(b.limit),
-        free = crate::units::human_bytes(b.disk_free),
-        n = status.movies.len(),
-        manifest = esc(&manifest),
-        stremio_install = esc(&stremio_install),
-        web_install = esc(&web_install),
-    );
-    Ok(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html))
-}
-
-async fn metrics(State(e): State<AppState>) -> ApiResult<impl IntoResponse> {
-    let body = crate::metrics::render(&e)?;
-    Ok((
-        [(
-            header::CONTENT_TYPE,
-            "text/plain; version=0.0.4; charset=utf-8",
-        )],
-        body,
-    ))
-}
-
+/// Liveness: 503 only when the daemon is actually broken. Low disk is a warning,
+/// not a failure (see `Engine::probe`).
 async fn healthz(State(e): State<AppState>) -> Response {
     match e.probe() {
         Ok(()) => (StatusCode::OK, "ok").into_response(),
@@ -396,6 +317,82 @@ async fn healthz(State(e): State<AppState>) -> Response {
     }
 }
 
+async fn prometheus(State(e): State<AppState>) -> ApiResult<impl IntoResponse> {
+    let body = crate::metrics::render(&e)?;
+    Ok((
+        [(
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    ))
+}
+
+// ---- global pause ----------------------------------------------------------
+
+#[derive(Deserialize, Default)]
+struct PauseRequest {
+    /// Seconds as a number, or a duration string such as "3h" or "90m".
+    /// Omitted or null means the configured default.
+    #[serde(default)]
+    duration: Option<serde_json::Value>,
+    #[serde(default)]
+    indefinite: bool,
+}
+
+async fn api_pause_get(State(e): State<AppState>) -> impl IntoResponse {
+    Json(e.pause_view())
+}
+
+/// Pause everything. The body is optional: `PUT /api/pause` alone uses the default
+/// duration. Repeating it while paused moves the end time.
+async fn api_pause_put(State(e): State<AppState>, body: Bytes) -> ApiResult<impl IntoResponse> {
+    let req: PauseRequest = if body.iter().all(u8::is_ascii_whitespace) {
+        PauseRequest::default()
+    } else {
+        serde_json::from_slice(&body).map_err(|err| {
+            ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "invalid", err.to_string())
+        })?
+    };
+    let duration = match req.duration {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::Number(n)) => Some(std::time::Duration::from_secs(
+            n.as_u64().ok_or_else(|| {
+                ApiError::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid",
+                    "duration must be a positive number of seconds",
+                )
+            })?,
+        )),
+        Some(serde_json::Value::String(s)) => {
+            Some(humantime::parse_duration(&s).map_err(|err| {
+                ApiError::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "invalid",
+                    format!("duration: {err}"),
+                )
+            })?)
+        }
+        Some(_) => {
+            return Err(ApiError::new(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "invalid",
+                "duration must be seconds or a string like \"3h\"",
+            ));
+        }
+    };
+    Ok(Json(e.pause_all(duration, req.indefinite).await?))
+}
+
+/// Lift the pause. Idempotent: resuming when not paused is a no-op.
+async fn api_pause_delete(State(e): State<AppState>) -> ApiResult<impl IntoResponse> {
+    let n = e.resume_all("manual").await?;
+    let mut v = serde_json::to_value(e.pause_view()).unwrap_or_default();
+    v["resumed"] = json!(n);
+    Ok(Json(v))
+}
+
 async fn api_root() -> impl IntoResponse {
     Json(json!({
         "name": "tornas",
@@ -403,6 +400,7 @@ async fn api_root() -> impl IntoResponse {
         "openapi": "/api/openapi.json",
         "resources": {
             "movies": "/api/movies",
+            "pause": "/api/pause",
             "logs": "/api/logs",
             "trackers": "/api/trackers",
             "config": "/api/config",
