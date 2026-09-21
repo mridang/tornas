@@ -24,4 +24,5 @@ Requires ansible-core 2.15 or newer on the controller and Python 3 on the hosts.
 - **Secrets** go in Vault. The env file is written `0640 root:tornas` and the task hides its diff when tokens are set.
 - **`tornas_trackers_sources: []`** means no sources at all, not the built-in defaults.
 - **Verification uses loopback**, so keep `127.0.0.0/8` in `tornas_allow_from` or set `tornas_verify: false`.
+- **Quote words YAML treats as booleans.** An unquoted `off`, `no`, `yes` or `on` becomes true or false before the template sees it, so a tracker source named `off` must be written `name: "off"`. The check rejects the file and says so, rather than installing it.
 - **Booleans** are rendered as exactly `true` or `false`, which is all the server accepts; `True`, `yes` or `1` would be rejected by the check.

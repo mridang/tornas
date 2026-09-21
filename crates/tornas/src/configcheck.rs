@@ -133,7 +133,16 @@ pub fn check_toml_text(text: &str) -> Report {
     let fc: FileConfig = match serde_ignored::deserialize(value, |p| unknown.push(p.to_string())) {
         Ok(fc) => fc,
         Err(e) => {
-            r.err(e.to_string().trim().to_owned());
+            let msg = e.to_string().trim().replace('\n', " ");
+            // YAML 1.1 (Ansible) turns unquoted yes/no/on/off into booleans, which then
+            // land in string fields of the rendered TOML.
+            let hint = if msg.contains("invalid type: boolean") && msg.contains("expected a string")
+            {
+                " (if this came from YAML or Ansible, quote values such as off, no, yes or on)"
+            } else {
+                ""
+            };
+            r.err(format!("{msg}{hint}"));
             return r;
         }
     };
@@ -538,6 +547,9 @@ mod tests {
         assert!(!r.errors.is_empty());
         let r = check_toml_text("not = [valid");
         assert!(r.errors[0].contains("not valid TOML"));
+        let r =
+            check_toml_text("[[trackers.sources]]\nname = false\nurl = \"https://x.example/l\"\n");
+        assert!(r.errors[0].contains("quote values"), "{:?}", r.errors);
     }
 
     #[test]
