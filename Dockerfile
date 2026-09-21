@@ -1,6 +1,6 @@
 # Builder runs on the host's native arch (BUILDPLATFORM) and cross-compiles with
 # cargo-zigbuild, so arm64 and armv7 images build at native speed without QEMU.
-FROM --platform=$BUILDPLATFORM rust:1.95-alpine AS builder
+FROM --platform=$BUILDPLATFORM rust:1.97-alpine AS builder
 ARG TARGETPLATFORM
 RUN apk add --no-cache musl-dev cmake make curl xz clang perl
 ENV ZIG_VERSION=0.13.0
