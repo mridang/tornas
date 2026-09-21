@@ -109,5 +109,16 @@ Also fixed there: /etc/tornas/config.toml shipped 0640 root:root and was unreada
 Source-address ACL in netacl.rs, applied as the outermost HTTP layer. Default allow list: loopback, RFC1918, link-local, unique-local and Tailscale's 100.64.0.0/10, so LAN and tailnet clients need no credentials and an exposed port serves nothing. IPv4-mapped IPv6 peers are unmapped before matching. X-Forwarded-For is honoured only from configured trusted proxies, walking right to left past further trusted hops. Configurable via [network].allow_from / trusted_proxies or --allow-from / --trusted-proxies. Refusals counted in tornas_forbidden_source_total.
 
 ## Deferred
+- Protocol encryption (MSE/PE). librqbit does not implement it, so BitTorrent traffic is
+  identifiable by deep packet inspection and ISPs that throttle it will. Upstream issue
+  ikatson/rqbit#617 asks for it and PR ikatson/rqbit#633 ("feat(mse): Message Stream
+  Encryption (MSE) support") is open, so the plan is to wait for it to land and then bump
+  the pinned rqbit rev rather than implement anything here. Note MSE is not a BEP: it is a
+  de facto standard from the Azureus and uTorrent developers, and it defeats throttling
+  rather than providing privacy. Until then the answer to ISP throttling is a VPN, which
+  needs the `--bind-device` and `--socks-proxy` flags below.
+- Expose librqbit's interface binding (`bind_device_name`, SO_BINDTODEVICE) and SOCKS5
+  proxy (`ConnectionOptions::proxy_url`) as `--bind-device` / `--socks-proxy`. Binding is
+  what makes a VPN a kill switch instead of best-effort.
 - Cloudflare Access (tunnel + Zero Trust JWT validation on /api only) for browser admin from machines that cannot run Tailscale. Free except a domain; does not help Stremio or DLNA, which cannot authenticate, so the player routes would stay on the address ACL. Revisit only if remote browser admin is wanted.
 - Poster caching, active-stream eviction protection, measured disk usage, HTTP-level integration tests, systemd install test in CI, `tornas install`/`uninstall` subcommands.
