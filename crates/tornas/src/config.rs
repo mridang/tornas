@@ -24,10 +24,22 @@ pub struct NetworkConfig {
     /// Bind IPv6 dual-stack sockets (`[::]`) for BitTorrent, DHT and HTTP. When false
     /// everything binds IPv4 only.
     pub ipv6: bool,
+    /// Source ranges allowed to reach the HTTP server. Defaults to loopback, the
+    /// private ranges and Tailscale, so the box is LAN-only out of the box.
+    pub allow_from: Vec<String>,
+    /// Proxies whose `X-Forwarded-For` header may name the real client.
+    pub trusted_proxies: Vec<String>,
 }
 impl Default for NetworkConfig {
     fn default() -> Self {
-        Self { ipv6: true }
+        Self {
+            ipv6: true,
+            allow_from: crate::netacl::DEFAULT_ALLOW
+                .split(',')
+                .map(str::to_owned)
+                .collect(),
+            trusted_proxies: Vec::new(),
+        }
     }
 }
 
@@ -152,6 +164,17 @@ pub struct ServerOpts {
     /// `[::]` answers on IPv4 and IPv6.
     #[arg(long, env = "TORNAS_HTTP_LISTEN", default_value = "[::]:3030")]
     pub http_listen: SocketAddr,
+
+    /// Source ranges allowed to reach the HTTP server (CIDRs or bare addresses).
+    /// Defaults to loopback, private ranges and Tailscale's 100.64.0.0/10, so the
+    /// server is reachable from the home network and your tailnet but not the
+    /// internet. Pass `0.0.0.0/0,::/0` to allow everything.
+    #[arg(long, env = "TORNAS_ALLOW_FROM", value_delimiter = ',')]
+    pub allow_from: Vec<String>,
+
+    /// Reverse proxies whose `X-Forwarded-For` may name the real client.
+    #[arg(long, env = "TORNAS_TRUSTED_PROXIES", value_delimiter = ',')]
+    pub trusted_proxies: Vec<String>,
 
     /// Force IPv4 everywhere (overrides `network.ipv6` in the config file).
     #[arg(long, env = "TORNAS_IPV4_ONLY")]
@@ -306,6 +329,12 @@ impl ServerOpts {
         let mut fc = FileConfig::load(self.config.as_deref())?;
         if self.ipv4_only {
             fc.network.ipv6 = false;
+        }
+        if !self.allow_from.is_empty() {
+            fc.network.allow_from = self.allow_from.clone();
+        }
+        if !self.trusted_proxies.is_empty() {
+            fc.network.trusted_proxies = self.trusted_proxies.clone();
         }
         let t = &mut fc.trackers;
         if self.disable_trackers {

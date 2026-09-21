@@ -71,6 +71,7 @@ pub struct Engine {
     pub tmdb: Option<Tmdb>,
     pub opts: ServerOpts,
     pub file_config: FileConfig,
+    pub acl: crate::netacl::Acl,
     pub trackers: TrackerFeed,
     pub torrents_dir: PathBuf,
     /// Saved .torrent files for movies added from a file rather than a magnet.
@@ -187,6 +188,15 @@ impl Engine {
         let meta_dir = data_dir.join("meta");
         std::fs::create_dir_all(&meta_dir)?;
         let file_config = opts.resolve_file_config()?;
+        let acl = crate::netacl::Acl::new(
+            &file_config.network.allow_from,
+            &file_config.network.trusted_proxies,
+        )?;
+        if acl.allows_everything() {
+            warn!(
+                "network.allow_from permits every source address; do not expose this port to the internet"
+            );
+        }
         let trackers = TrackerFeed::new(file_config.trackers.clone(), data_dir);
         let ipv6 = file_config.network.ipv6;
         let catalog = Catalog::open(&data_dir.join("catalog.db"))?;
@@ -238,6 +248,7 @@ impl Engine {
             tmdb,
             opts,
             file_config,
+            acl,
             trackers,
             torrents_dir,
             meta_dir,

@@ -104,3 +104,10 @@ Auto-update loop (--auto-update, verifies .sha256, atomic swap, exec-in-place re
 ## Health semantics (2026-09-21)
 Found under a real systemd container: the watchdog pinged only while probe() succeeded, and probe() failed on low disk, so any box with free space under min_free/2 would be killed and restarted every WatchdogSec forever. probe() is now liveness-only (catalog + session + statvfs); low disk, over-budget and missing TMDB credentials surface via StatusView::warnings, `tornas status`/`top`, and the tornas_disk_below_min_free / tornas_warnings metrics.
 Also fixed there: /etc/tornas/config.toml shipped 0640 root:root and was unreadable by the service user (now 0644 + a tmpfiles z line), and ConfigurationDirectory=tornas fought tmpfiles over the directory mode (removed).
+
+## Access control (2026-09-21)
+Source-address ACL in netacl.rs, applied as the outermost HTTP layer. Default allow list: loopback, RFC1918, link-local, unique-local and Tailscale's 100.64.0.0/10, so LAN and tailnet clients need no credentials and an exposed port serves nothing. IPv4-mapped IPv6 peers are unmapped before matching. X-Forwarded-For is honoured only from configured trusted proxies, walking right to left past further trusted hops. Configurable via [network].allow_from / trusted_proxies or --allow-from / --trusted-proxies. Refusals counted in tornas_forbidden_source_total.
+
+## Deferred
+- Cloudflare Access (tunnel + Zero Trust JWT validation on /api only) for browser admin from machines that cannot run Tailscale. Free except a domain; does not help Stremio or DLNA, which cannot authenticate, so the player routes would stay on the address ACL. Revisit only if remote browser admin is wanted.
+- Poster caching, active-stream eviction protection, measured disk usage, HTTP-level integration tests, systemd install test in CI, `tornas install`/`uninstall` subcommands.

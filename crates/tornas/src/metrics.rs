@@ -52,6 +52,7 @@ pub fn install() -> Option<&'static PrometheusHandle> {
     counter!("tornas_updates_installed_total").absolute(0);
     counter!("tornas_stalled_evictions_total").absolute(0);
     counter!("tornas_unauthorized_total").absolute(0);
+    counter!("tornas_forbidden_source_total").absolute(0);
     let _ = HANDLE.set(handle);
     HANDLE.get()
 }
@@ -96,6 +97,9 @@ pub fn update_installed() {
 }
 pub fn stalled_eviction() {
     counter!("tornas_stalled_evictions_total").increment(1);
+}
+pub fn forbidden_source() {
+    counter!("tornas_forbidden_source_total").increment(1);
 }
 pub fn unauthorized() {
     counter!("tornas_unauthorized_total").increment(1);

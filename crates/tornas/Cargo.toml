@@ -47,6 +47,7 @@ gethostname = "1"
 metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.18", default-features = false }
 url = "2"
+ipnet = "2"
 toml = "0.9"
 base64 = "0.22"
 humantime-serde = "1"

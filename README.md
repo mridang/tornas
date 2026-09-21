@@ -62,6 +62,8 @@ Three layers, later ones win: the TOML config file (found automatically as above
 | `--config` | `TORNAS_CONFIG` | | TOML file for trackers and network |
 | `--http-listen` | `TORNAS_HTTP_LISTEN` | `[::]:3030` | API, addon, streams and DLNA, IPv4 and IPv6 |
 | `--ipv4-only` | `TORNAS_IPV4_ONLY` | off | bind IPv4 only everywhere |
+| `--allow-from` | `TORNAS_ALLOW_FROM` | LAN + Tailscale | source ranges allowed to reach the HTTP server |
+| `--trusted-proxies` | `TORNAS_TRUSTED_PROXIES` | none | proxies whose `X-Forwarded-For` is believed |
 | `--disable-trackers` | `TORNAS_TRACKERS_DISABLE` | off | turn off the public tracker feed |
 | `--tracker-source` | `TORNAS_TRACKER_SOURCES` | | extra list URL or known name, repeatable |
 | `--tracker-schemes` | `TORNAS_TRACKER_SCHEMES` | `https,udp` | allowed tracker schemes |
@@ -152,6 +154,25 @@ Logs go to stdout (journald under systemd, `docker logs` in a container). Option
 
 The server also keeps the last 2000 lines in memory. `tornas logs -n 200`, `--follow`, `--level warn` reads them over the API from anywhere (needs the API token when one is set), so a Synology box without journal access is still debuggable. `GET /api/logs?since=<seq>&limit=&level=` is the underlying endpoint.
 
+## Access control
+
+By default tornas answers only clients on loopback, the private ranges (RFC1918 and unique-local, plus link-local) and Tailscale's `100.64.0.0/10`. Anything else gets `403`. That means:
+
+* **At home**, Stremio, DLNA players and the web index work with no credentials, because they are on the LAN.
+* **Away from home**, join the box's tailnet and it works exactly the same, because the tailnet address is already trusted. Install the Stremio addon with the Tailscale name (`http://tornas.tailnet.ts.net:3030/manifest.json`) rather than `tornas.local`, since `.local` only resolves at home. Stream URLs follow the hostname the request arrived on, so one installation keeps working as you roam.
+* **Exposed by accident**, the port serves nothing.
+
+Do not port-forward 3030. Nothing forwards it for you: the router mapping tornas requests via UPnP is for the BitTorrent port only.
+
+| Flag | Env | Default |
+|---|---|---|
+| `--allow-from` | `TORNAS_ALLOW_FROM` | loopback, private ranges, Tailscale |
+| `--trusted-proxies` | `TORNAS_TRUSTED_PROXIES` | none |
+
+`X-Forwarded-For` is honoured only when the peer is a configured trusted proxy, so a client cannot spoof its way in with a header. Behind a reverse proxy, set `--trusted-proxies` to the proxy address. To turn the check off entirely, pass `--allow-from 0.0.0.0/0,::/0`; the server logs a warning when you do.
+
+On top of the address check, `TORNAS_API_TOKEN` protects API writes and the log endpoint with `Authorization: Bearer <token>`, which is worth setting if other people share your LAN or tailnet.
+
 ## Metrics
 
 `GET /metrics` serves Prometheus text. Point a Prometheus scrape job or Grafana Agent at it.
@@ -159,7 +180,7 @@ The server also keeps the last 2000 lines in memory. `tornas logs -n 200`, `--fo
 * `tornas_budget_*_bytes`, `tornas_disk_*_bytes`, `tornas_disk_below_min_free`, `tornas_warnings`: the disk budget and filesystem state.
 * `tornas_movies`, `tornas_movies_protected`, `tornas_movies_downloading`.
 * `tornas_adds_total{result}`, `tornas_evictions_total`, `tornas_evicted_bytes_total`, `tornas_removals_total`, `tornas_tmdb_errors_total`.
-* `tornas_streams_total{kind}`, `tornas_stream_bytes_total`.
+* `tornas_streams_total{kind}`, `tornas_stream_bytes_total`, `tornas_forbidden_source_total`, `tornas_unauthorized_total`.
 * `tornas_movie_progress_ratio{imdb_id,title,state}`, `tornas_movie_size_bytes`, `tornas_movie_idle_seconds`, `tornas_movie_peers`, `tornas_movie_download_bytes_per_second`, `tornas_movie_upload_bytes_per_second`.
 * `tornas_session_*` and `rqbit_*`: transfer rates, peers and counters from the torrent engine.
 

@@ -13,6 +13,7 @@ pub mod http;
 pub mod logging;
 pub mod mdns;
 pub mod metrics;
+pub mod netacl;
 pub mod tmdb;
 pub mod trackers;
 pub mod tui;
@@ -20,6 +21,7 @@ pub mod units;
 pub mod update;
 pub mod watchdog;
 
+use std::net::SocketAddr;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -160,14 +162,14 @@ pub async fn run_server(
                 info!("listening on https://{addr}");
                 axum_server::bind_rustls(addr, tls)
                     .handle(handle)
-                    .serve(app.into_make_service())
+                    .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                     .await?;
             }
             _ => {
                 info!("listening on http://{addr}  (Stremio manifest at /manifest.json)");
                 axum_server::bind(addr)
                     .handle(handle)
-                    .serve(app.into_make_service())
+                    .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                     .await?;
             }
         }

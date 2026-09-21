@@ -6,6 +6,21 @@
 # Bind IPv6 dual-stack sockets ([::]) for BitTorrent, DHT and HTTP. false = IPv4 only.
 ipv6 = true
 
+# Source addresses allowed to reach the HTTP server (API, Stremio, video, DLNA).
+# The default is loopback + the private ranges + Tailscale's 100.64.0.0/10, so the
+# box works on the home network and over your tailnet, and serves nothing if the
+# port is ever exposed. Use ["0.0.0.0/0", "::/0"] to disable the check.
+allow_from = [
+  "127.0.0.0/8", "::1/128",
+  "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+  "169.254.0.0/16", "fe80::/10", "fc00::/7",
+  "100.64.0.0/10",
+]
+
+# Reverse proxies whose X-Forwarded-For header may name the real client.
+# Left empty, the header is ignored and the socket peer is used.
+trusted_proxies = []
+
 [trackers]
 # Public tracker feed: fetched periodically and attached to every public torrent.
 # Private torrents (BEP 27) never get these.

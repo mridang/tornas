@@ -150,6 +150,7 @@ pub fn router(engine: AppState, upnp: Option<Router>) -> Router {
         // Video bytes, shared by Stremio and DLNA
         .route("/video/{imdb_id}/{filename}", get(video))
         .route("/video/{imdb_id}", get(video));
+    let engine_for_acl = engine.clone();
     let mut r = r
         .layer(axum::middleware::from_fn_with_state(
             engine.clone(),
@@ -159,10 +160,53 @@ pub fn router(engine: AppState, upnp: Option<Router>) -> Router {
     if let Some(u) = upnp {
         r = r.nest("/upnp", u);
     }
-    // Outermost last: the private-network middleware wraps CORS so it can decorate
-    // the preflight response that CORS produces.
+    // Outermost last: the source-address check wraps everything, so a client from
+    // outside the allowed ranges gets nothing but 403. Inside it, the
+    // private-network middleware wraps CORS to decorate its preflight response.
     r.layer(cors)
         .layer(axum::middleware::from_fn(allow_private_network))
+        .layer(axum::middleware::from_fn_with_state(
+            engine_for_acl,
+            require_allowed_source,
+        ))
+}
+
+/// Refuse anything from a source address outside `network.allow_from`. This is the
+/// primary protection: on the defaults only the LAN, loopback and your tailnet get
+/// through, so Stremio and DLNA need no credentials and an exposed port serves
+/// nothing.
+async fn require_allowed_source(
+    State(e): State<AppState>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    if e.acl.allows_everything() {
+        return next.run(req).await;
+    }
+    let peer = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|c| c.0.ip());
+    // No connect info (in-process tests) means no socket to judge; let it through.
+    let Some(peer) = peer else {
+        return next.run(req).await;
+    };
+    let xff = req
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok());
+    let client = e.acl.client_ip(peer, xff);
+    if e.acl.allows(client) {
+        return next.run(req).await;
+    }
+    tracing::debug!(%client, path = %req.uri().path(), "refused: source address not allowed");
+    crate::metrics::forbidden_source();
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "forbidden",
+        format!("{client} is not in an allowed source range"),
+    )
+    .into_response()
 }
 
 /// When an API token is configured, mutating calls under /api and the log

@@ -4406,6 +4406,7 @@ dependencies = [
  "http",
  "humantime",
  "humantime-serde",
+ "ipnet",
  "librqbit",
  "librqbit-sha1-wrapper",
  "librqbit-upnp-serve",

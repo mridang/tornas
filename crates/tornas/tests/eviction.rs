@@ -53,6 +53,8 @@ fn server_opts(data_dir: &Path, tmdb: SocketAddr, budget: u64) -> ServerOpts {
         disable_mdns: true,
         config: None,
         ipv4_only: false,
+        allow_from: vec![],
+        trusted_proxies: vec![],
         disable_trackers: true,
         tracker_sources: vec![],
         tracker_schemes: None,
