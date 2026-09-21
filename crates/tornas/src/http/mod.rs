@@ -160,6 +160,9 @@ pub fn router(engine: AppState, upnp: Option<Router>) -> Router {
     if let Some(u) = upnp {
         r = r.nest("/upnp", u);
     }
+    // Inside the source-address check, so refused requests are not counted here
+    // (they have their own counter), and after routing so the route template is known.
+    let r = r.layer(axum::middleware::from_fn(crate::metrics::track_http));
     // Outermost last: the source-address check wraps everything, so a client from
     // outside the allowed ranges gets nothing but 403. Inside it, the
     // private-network middleware wraps CORS to decorate its preflight response.

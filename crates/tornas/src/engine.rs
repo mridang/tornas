@@ -148,20 +148,6 @@ pub struct StatusView {
     pub events: Vec<Event>,
 }
 
-/// Loose view over librqbit's JSON stats so we never depend on private field names.
-fn json_u64(v: &serde_json::Value, path: &[&str]) -> u64 {
-    let mut cur = v;
-    for p in path {
-        cur = match cur.get(p) {
-            Some(c) => c,
-            None => return 0,
-        };
-    }
-    cur.as_u64()
-        .or_else(|| cur.as_f64().map(|f| f as u64))
-        .unwrap_or(0)
-}
-
 pub fn disk_usage(path: &Path) -> anyhow::Result<(u64, u64)> {
     let st = nix::sys::statvfs::statvfs(path).with_context(|| format!("statvfs {path:?}"))?;
     let frag = st.fragment_size() as u64;
@@ -258,11 +244,9 @@ impl Engine {
             add_lock: tokio::sync::Mutex::new(()),
         });
         *engine.weak.write() = Arc::downgrade(&engine);
-        if engine.trackers.config.read().enabled && engine.trackers.state().trackers.is_empty() {
-            if let Err(e) = engine.trackers.refresh().await {
-                warn!("initial tracker fetch failed, continuing without public trackers: {e:#}");
-            }
-        }
+        // The tracker list is fetched by the background refresh loop, whose first tick
+        // fires immediately. Never block startup on it: a slow or offline source would
+        // otherwise hold the HTTP server, Stremio and DLNA unreachable.
         engine.reconcile().await?;
         engine.catalog.add_event("start", "server started")?;
         let handles: Vec<ManagedTorrentHandle> = engine
@@ -819,38 +803,17 @@ impl Engine {
         match handle {
             Some(h) => {
                 let stats = h.stats();
-                let live = stats
-                    .live
-                    .as_ref()
-                    .map(|l| serde_json::to_value(l).unwrap_or_default());
-                let live = live.unwrap_or_default();
+                let live = stats.live.as_ref();
                 MovieView {
-                    state: match &stats.state {
-                        librqbit::TorrentStatsState::Initializing { .. } => "checking".into(),
-                        librqbit::TorrentStatsState::Live => {
-                            if stats.finished {
-                                "seeding".into()
-                            } else {
-                                "downloading".into()
-                            }
-                        }
-                        librqbit::TorrentStatsState::Paused => {
-                            if stats.finished {
-                                "done".into()
-                            } else {
-                                "paused".into()
-                            }
-                        }
-                        librqbit::TorrentStatsState::Error => "error".into(),
-                    },
+                    state: state_label(&stats).into(),
                     progress_bytes: stats.progress_bytes,
                     total_bytes: stats.total_bytes,
                     finished: stats.finished,
-                    download_bps: (json_u64(&live, &["download_speed", "mbps"]) as f64 * 125_000.0)
-                        as u64,
-                    upload_bps: (json_u64(&live, &["upload_speed", "mbps"]) as f64 * 125_000.0)
-                        as u64,
-                    peers: json_u64(&live, &["snapshot", "peer_stats", "live"]),
+                    download_bps: live.map(|l| l.download_speed.as_bytes()).unwrap_or(0),
+                    upload_bps: live.map(|l| l.upload_speed.as_bytes()).unwrap_or(0),
+                    peers: live
+                        .map(|l| u64::from(l.snapshot.peer_stats.live))
+                        .unwrap_or(0),
                     movie,
                     torrent,
                     protected,
@@ -895,7 +858,7 @@ impl Engine {
             .filter(|c| !c.protected)
             .min_by_key(|c| c.last_used_at)
             .cloned();
-        let snap = serde_json::to_value(self.session.stats_snapshot()).unwrap_or_default();
+        let snap = self.session.stats_snapshot();
         Ok(StatusView {
             version: env!("CARGO_PKG_VERSION"),
             hostname: gethostname::gethostname().to_string_lossy().into_owned(),
@@ -909,16 +872,111 @@ impl Engine {
                 next_eviction,
             },
             session: SessionView {
-                download_bps: (json_u64(&snap, &["download_speed", "mbps"]) as f64 * 125_000.0)
-                    as u64,
-                upload_bps: (json_u64(&snap, &["upload_speed", "mbps"]) as f64 * 125_000.0) as u64,
-                peers_live: json_u64(&snap, &["peers", "live"]),
+                download_bps: snap.download_speed.as_bytes(),
+                upload_bps: snap.upload_speed.as_bytes(),
+                peers_live: u64::from(snap.peers.live),
                 uptime_secs: self.started.elapsed().as_secs(),
                 torrents: self.session.with_torrents(|it| it.count()),
                 listen_addr: self.session.listen_addr(),
             },
             movies: self.list_movies()?,
             events: self.catalog.recent_events(20)?,
+        })
+    }
+
+    /// Per-torrent facts for `/metrics`, one entry per catalogued movie that has a
+    /// loaded torrent.
+    pub fn torrent_facts(&self) -> anyhow::Result<Vec<TorrentFacts>> {
+        let now = now_secs();
+        let movies = self.catalog.list_movies()?;
+        let mut out = Vec::new();
+        for row in self.catalog.list_torrents()? {
+            let Some(h) = self.handle_for(&row.info_hash) else {
+                continue;
+            };
+            let movie = movies.iter().find(|m| m.imdb_id == row.imdb_id);
+            let stats = h.stats();
+            let (size_bytes, piece_length, pieces, files, private) = h
+                .with_metadata(|m| {
+                    let l = m.info.lengths();
+                    (
+                        l.total_length(),
+                        u64::from(l.default_piece_length()),
+                        u64::from(l.total_pieces()),
+                        m.info.iter_file_details().count() as u64,
+                        m.info.info().private,
+                    )
+                })
+                .unwrap_or_default();
+            let live = stats.live.as_ref();
+            let p = live.map(|l| &l.snapshot.peer_stats);
+            // librqbit does not re-export the peer stats type, so read fields through a
+            // macro and let the compiler infer it.
+            macro_rules! pv {
+                ($f:ident) => {
+                    p.map(|p| u64::from(p.$f)).unwrap_or(0)
+                };
+            }
+            let down = live.map(|l| l.download_speed.as_bytes()).unwrap_or(0);
+            let remaining = stats.total_bytes.saturating_sub(stats.progress_bytes);
+            let mut trackers_by_scheme = std::collections::BTreeMap::new();
+            for t in &h.shared().trackers {
+                *trackers_by_scheme.entry(t.scheme().to_owned()).or_insert(0) += 1;
+            }
+            out.push(TorrentFacts {
+                imdb_id: row.imdb_id.clone(),
+                info_hash: row.info_hash.clone(),
+                title: movie.map(|m| m.title.clone()).unwrap_or_default(),
+                state: state_label(&stats),
+                private,
+                size_bytes,
+                selected_bytes: stats.total_bytes,
+                progress_bytes: stats.progress_bytes,
+                piece_length,
+                pieces,
+                pieces_verified: live
+                    .map(|l| l.snapshot.downloaded_and_checked_pieces)
+                    .unwrap_or(0),
+                files,
+                fetched_bytes: live.map(|l| l.snapshot.fetched_bytes).unwrap_or(0),
+                uploaded_bytes: live
+                    .map(|l| l.snapshot.uploaded_bytes)
+                    .unwrap_or(stats.uploaded_bytes),
+                download_bps: down,
+                upload_bps: live.map(|l| l.upload_speed.as_bytes()).unwrap_or(0),
+                peers: [
+                    ("queued", pv!(queued)),
+                    ("connecting", pv!(connecting)),
+                    ("live", pv!(live)),
+                    ("seen", pv!(seen)),
+                    ("dead", pv!(dead)),
+                    ("not_needed", pv!(not_needed)),
+                ],
+                peers_live_by_transport: [
+                    ("tcp", pv!(live_tcp)),
+                    ("utp", pv!(live_utp)),
+                    ("socks", pv!(live_socks)),
+                ],
+                piece_download_secs_avg: live
+                    .and_then(|l| l.average_piece_download_time)
+                    .map(|d| d.as_secs_f64()),
+                eta_secs: (!stats.finished && down > 0).then(|| remaining / down),
+                idle_secs: now - movie.map(|m| m.last_used_at).unwrap_or(row.added_at),
+                trackers_by_scheme,
+            });
+        }
+        Ok(out)
+    }
+
+    /// DHT routing table sizes and in-flight queries, if DHT is enabled.
+    pub fn dht_stats(&self) -> Option<(u64, u64, u64)> {
+        self.session.get_dht().map(|d| {
+            let s = d.stats();
+            (
+                s.routing_table_size as u64,
+                s.routing_table_size_v6 as u64,
+                s.outstanding_requests as u64,
+            )
         })
     }
 
@@ -1037,6 +1095,48 @@ impl Engine {
             }
         }
     }
+}
+
+/// One word for a torrent's state, shared by the API, the TUI and metrics.
+pub fn state_label(stats: &librqbit::TorrentStats) -> &'static str {
+    match &stats.state {
+        librqbit::TorrentStatsState::Initializing { .. } => "checking",
+        librqbit::TorrentStatsState::Live if stats.finished => "seeding",
+        librqbit::TorrentStatsState::Live => "downloading",
+        librqbit::TorrentStatsState::Paused if stats.finished => "done",
+        librqbit::TorrentStatsState::Paused => "paused",
+        librqbit::TorrentStatsState::Error => "error",
+    }
+}
+
+/// Everything the metrics endpoint reports about one torrent. Peer addresses are
+/// deliberately absent: they would be unbounded label values.
+#[derive(Debug, Clone, Default)]
+pub struct TorrentFacts {
+    pub imdb_id: String,
+    pub info_hash: String,
+    pub title: String,
+    pub state: &'static str,
+    pub private: bool,
+    pub size_bytes: u64,
+    pub selected_bytes: u64,
+    pub progress_bytes: u64,
+    pub piece_length: u64,
+    pub pieces: u64,
+    pub pieces_verified: u64,
+    pub files: u64,
+    pub fetched_bytes: u64,
+    pub uploaded_bytes: u64,
+    pub download_bps: u64,
+    pub upload_bps: u64,
+    /// queued, connecting, live, seen, dead, not_needed
+    pub peers: [(&'static str, u64); 6],
+    /// tcp, utp, socks
+    pub peers_live_by_transport: [(&'static str, u64); 3],
+    pub piece_download_secs_avg: Option<f64>,
+    pub eta_secs: Option<u64>,
+    pub idle_secs: i64,
+    pub trackers_by_scheme: std::collections::BTreeMap<String, u64>,
 }
 
 pub fn is_video(name: &str) -> bool {

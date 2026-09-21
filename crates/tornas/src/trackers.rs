@@ -438,7 +438,6 @@ impl TrackerFeed {
         info!(
             "tracker refresh: {n} trackers ({rejected} rejected, {deduplicated} duplicates), changed={changed}"
         );
-        crate::metrics::trackers(n, self.state.read().sources.iter());
         Ok(changed)
     }
 }

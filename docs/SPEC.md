@@ -122,3 +122,6 @@ Source-address ACL in netacl.rs, applied as the outermost HTTP layer. Default al
   what makes a VPN a kill switch instead of best-effort.
 - Cloudflare Access (tunnel + Zero Trust JWT validation on /api only) for browser admin from machines that cannot run Tailscale. Free except a domain; does not help Stremio or DLNA, which cannot authenticate, so the player routes would stay on the address ACL. Revisit only if remote browser admin is wanted.
 - Poster caching, active-stream eviction protection, measured disk usage, HTTP-level integration tests, systemd install test in CI, `tornas install`/`uninstall` subcommands.
+
+## Metrics rework (2026-09-21)
+63 families, validated for duplicates and types. Session stats are rendered from librqbit's typed snapshot instead of its `as_prometheus`, which emits `rqbit_peers_queued` twice (the second is the peers-seen count) and would make Prometheus reject the whole scrape; worth a one-line upstream fix at librqbit/src/session_stats/snapshot.rs:97. Rates now use `Speed::as_bytes()`: the old code read `mbps` as megabits and truncated it first, so rates were ~8.4x low and anything under 1 MiB/s showed 0. The first tracker-list fetch no longer blocks startup (HTTP answered after 20 s when a source timed out; now 0.15 s). Tracker announce metrics need an upstream hook and are not available.

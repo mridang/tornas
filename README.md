@@ -175,14 +175,25 @@ On top of the address check, `TORNAS_API_TOKEN` protects API writes and the log 
 
 ## Metrics
 
-`GET /metrics` serves Prometheus text. Point a Prometheus scrape job or Grafana Agent at it.
+`GET /metrics` serves Prometheus text. Point a scrape job or Grafana Agent at it. It is subject to the same source-address check as everything else, so scrape from the LAN or your tailnet.
 
-* `tornas_budget_*_bytes`, `tornas_disk_*_bytes`, `tornas_disk_below_min_free`, `tornas_warnings`: the disk budget and filesystem state.
-* `tornas_movies`, `tornas_movies_protected`, `tornas_movies_downloading`.
-* `tornas_adds_total{result}`, `tornas_evictions_total`, `tornas_evicted_bytes_total`, `tornas_removals_total`, `tornas_tmdb_errors_total`.
-* `tornas_streams_total{kind}`, `tornas_stream_bytes_total`, `tornas_forbidden_source_total`, `tornas_unauthorized_total`.
-* `tornas_movie_progress_ratio{imdb_id,title,state}`, `tornas_movie_size_bytes`, `tornas_movie_idle_seconds`, `tornas_movie_peers`, `tornas_movie_download_bytes_per_second`, `tornas_movie_upload_bytes_per_second`.
-* `tornas_session_*` and `rqbit_*`: transfer rates, peers and counters from the torrent engine.
+Per-torrent series carry only an `imdb_id` label; the descriptive fields (info hash, title, state, private flag) live on `tornas_torrent_info` so you can join on `imdb_id` without multiplying series. Peer addresses are never labels, since every peer would become a new series.
+
+| Area | Series |
+|---|---|
+| Build and process | `tornas_build_info{version,os,arch}`, `tornas_uptime_seconds`, and on Linux `tornas_process_resident_memory_bytes`, `tornas_process_open_fds`, `tornas_process_threads` |
+| Disk budget | `tornas_budget_limit_bytes`, `tornas_budget_used_bytes`, `tornas_budget_min_free_bytes`, `tornas_disk_free_bytes`, `tornas_disk_total_bytes`, `tornas_disk_below_min_free`, `tornas_warnings` |
+| Library | `tornas_movies`, `tornas_movies_protected`, `tornas_torrents{private}`, `tornas_torrents_size_bytes{private}`, `tornas_torrents_by_state{state}` |
+| Per torrent | `tornas_torrent_info`, `_size_bytes` (all files), `_selected_bytes` (the video), `_progress_bytes`, `_progress_ratio`, `_piece_length_bytes`, `_pieces`, `_pieces_verified`, `_files`, `_fetched_bytes_total`, `_uploaded_bytes_total`, `_download_bytes_per_second`, `_upload_bytes_per_second`, `_piece_download_seconds`, `_eta_seconds`, `_idle_seconds`, `_peers{state}`, `_peers_live{transport}`, `_trackers{scheme}` |
+| Peers and transfer | `tornas_fetched_bytes_total`, `tornas_uploaded_bytes_total`, `tornas_download_bytes_per_second`, `tornas_upload_bytes_per_second`, `tornas_peers{state}`, `tornas_peers_live{transport}`, `tornas_peer_connections_total{transport,family,outcome}`, `tornas_peer_steals_total`, `tornas_blocked_connections_total{direction}` |
+| DHT (UDP) | `tornas_dht_enabled`, `tornas_dht_nodes{family}`, `tornas_dht_outstanding_requests` |
+| Tracker feed | `tornas_trackers_enabled`, `tornas_trackers_active{scheme}`, `tornas_tracker_list_age_seconds`, `tornas_tracker_list_rejected`, `tornas_tracker_list_deduplicated`, `tornas_tracker_source_up{source}`, `tornas_tracker_source_accepted{source}` |
+| Events | `tornas_adds_total{result}`, `tornas_evictions_total`, `tornas_evicted_bytes_total`, `tornas_stalled_evictions_total`, `tornas_removals_total`, `tornas_seeding_paused_total`, `tornas_streams_total{kind}`, `tornas_stream_bytes_total`, `tornas_tmdb_errors_total`, `tornas_updates_installed_total` |
+| HTTP | `tornas_http_requests_total{route,method,status}`, `tornas_http_request_duration_seconds{route}` (histogram), `tornas_unauthorized_total`, `tornas_forbidden_source_total` |
+
+`route` is the route template such as `/api/movies/{imdb_id}`, never the raw path. For video routes the duration is time to response headers, not the length of the stream. Counters reset when the process restarts, which Prometheus handles.
+
+Not available: tracker announce counts and results. Announces happen inside librqbit, which exposes no hook for them; `tornas_torrent_trackers{scheme}` shows which trackers each torrent was given, but not whether they answered.
 
 ## Stremio
 
