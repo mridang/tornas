@@ -158,6 +158,18 @@ pub fn render(engine: &Engine) -> anyhow::Result<String> {
     );
     gauge(
         &mut out,
+        "tornas_disk_below_min_free",
+        "1 when free disk is under the configured minimum",
+        u8::from(b.disk_free < b.min_free),
+    );
+    gauge(
+        &mut out,
+        "tornas_warnings",
+        "Active operational warnings",
+        status.warnings.len(),
+    );
+    gauge(
+        &mut out,
         "tornas_movies_protected",
         "Movies inside the stream grace window",
         status.movies.iter().filter(|m| m.protected).count(),
