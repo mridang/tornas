@@ -139,4 +139,4 @@ Build (tornas features): USB disk watch that triggers the pause while TORNAS_REQ
 Keep as-is: client name stays "rqbit" (trackers recognise it), peer timeouts, tracker announce interval, write-through cache (off, buggy), leech-only (off).
 Skipped: SOCKS5 proxy (binding covers the VPN case), open-stream eviction protection, measured disk usage, temperature/throttling metrics, self-signed HTTPS, install/uninstall commands, TV series, TCP-off, rqbit watch folder, rqbit web UI/API, Postgres persistence, rqbit Prometheus exporter.
 Later: multiple disks, Cloudflare Access, MSE/PE (upstream PR ikatson/rqbit#633).
-Release blocker found: semantic-release-cargo's verify step needs a registry token and a `version` on git dependencies, so it fails on librqbit's git deps; proposed replacing it with @semantic-release/exec bumping [workspace.package].version.
+Release blocker found: semantic-release-cargo's verify step needs a registry token and a `version` on git dependencies, so it fails on librqbit's git deps; replaced it with @semantic-release/exec running scripts/set-version.sh, which bumps [workspace.package].version and refreshes Cargo.lock.

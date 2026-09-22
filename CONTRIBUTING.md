@@ -143,6 +143,17 @@ diff. Reference issues with `Closes #N` / `Refs #N` in a trailer.
 - Update `README.md` if you add or rename a CLI flag, and `docs/SCOPE.md`
   if the change moves something across the in-scope / deferred boundary.
 
+## Release secrets
+
+Pushing to `master` runs semantic-release, which needs these repository secrets:
+
+| Secret | Used for |
+|---|---|
+| `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` | pushing the multi-arch image |
+| `APT_GPG_PRIVATE_KEY`, `APT_GPG_PASSPHRASE` | signing the apt repository (see below) |
+
+GitHub Pages must serve the `gh-pages` branch for the apt repository. No cargo registry token is needed: nothing is published to crates.io, and the version is bumped by `scripts/set-version.sh`.
+
 ## apt repository signing key
 
 The release workflow signs the apt repository on `gh-pages` with a GPG key held
