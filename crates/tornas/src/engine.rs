@@ -418,25 +418,77 @@ impl Engine {
     /// the current bitfield is taken from memory and written back before re-adding;
     /// fastresume then spot-checks a few pieces instead of hashing everything. The
     /// re-add uses the saved metadata, so nothing is fetched from peers.
+    /// The exact piece map from memory.
+    fn piece_map(&self, h: &ManagedTorrentHandle) -> Option<Vec<u8>> {
+        librqbit::Api::new(self.session.clone(), None)
+            .api_dump_haves(TorrentIdOrHash::Id(h.id()))
+            .ok()
+            .map(|(bf, _)| bf.as_raw_slice().to_vec())
+    }
+
+    /// Replace librqbit's saved piece map. A rename, so a flush still in flight
+    /// from librqbit lands on the old file and cannot overwrite this one.
+    fn write_piece_map(&self, info_hash: &str, bytes: &[u8]) -> anyhow::Result<()> {
+        let bitv = self.session_dir.join(format!("{info_hash}.bitv"));
+        let tmp = bitv.with_extension("bitv.tmp");
+        std::fs::write(&tmp, bytes).with_context(|| format!("writing {tmp:?}"))?;
+        std::fs::rename(&tmp, &bitv).with_context(|| format!("replacing {bitv:?}"))?;
+        Ok(())
+    }
+
+    fn live_peers(&self, h: &ManagedTorrentHandle) -> Vec<SocketAddr> {
+        // The default filter is "live peers only".
+        let Ok(filter) = serde_json::from_value(serde_json::json!({})) else {
+            return Vec::new();
+        };
+        librqbit::Api::new(self.session.clone(), None)
+            .api_peer_stats(TorrentIdOrHash::Id(h.id()), filter)
+            .map(|snap| snap.peers.keys().filter_map(|a| a.parse().ok()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Stop the engine, keeping every piece downloaded so far. librqbit writes piece
+    /// maps every 16 MiB and loses the last write when the process exits, so after
+    /// it stops, the exact maps are written from memory.
+    pub async fn shutdown(&self) {
+        self.session.stop().await;
+        if self.is_disk_missing() {
+            return;
+        }
+        let handles: Vec<_> = self
+            .session
+            .with_torrents(|it| it.map(|(_, h)| h.clone()).collect());
+        let mut saved = 0;
+        for h in handles {
+            let hash = hash_hex(h.info_hash());
+            if let Some(bytes) = self.piece_map(&h) {
+                match self.write_piece_map(&hash, &bytes) {
+                    Ok(()) => saved += 1,
+                    Err(e) => warn!("saving piece map for {hash}: {e:#}"),
+                }
+            }
+        }
+        debug!("saved {saved} piece maps");
+    }
+
     pub async fn reload_torrent(&self, row: &TorrentRow) -> anyhow::Result<()> {
         let Some(h) = self.handle_for(&row.info_hash) else {
             // Not loaded; the new options apply the next time it starts.
             return Ok(());
         };
         let was_paused = h.is_paused();
+        // Peers it is talking to now, so the re-added torrent reconnects at once
+        // instead of waiting for DHT or trackers.
+        let peers = self.live_peers(&h);
         if !was_paused {
             // Pausing writes the piece map out, so the copy below is current.
             if let Err(e) = self.session.pause(&h).await {
                 debug!("pause before reload: {e:#}");
             }
         }
-        let bitv = self.session_dir.join(format!("{}.bitv", row.info_hash));
         // The bitfield on disk is written asynchronously and can lag behind; take the
         // exact one from memory instead (the torrent is paused, so it is final).
-        let saved: Option<Vec<u8>> = librqbit::Api::new(self.session.clone(), None)
-            .api_dump_haves(TorrentIdOrHash::Id(h.id()))
-            .ok()
-            .map(|(bf, _)| bf.as_raw_slice().to_vec());
+        let saved = self.piece_map(&h);
         // Movies added before metadata was kept: save it now, while it is in memory,
         // so the re-add below does not have to fetch it from peers.
         let meta = self.meta_path(&row.info_hash);
@@ -453,13 +505,15 @@ impl Engine {
             .await
             .with_context(|| format!("reloading {}", row.imdb_id))?;
         if let Some(bytes) = saved {
-            let tmp = bitv.with_extension("bitv.tmp");
-            std::fs::write(&tmp, &bytes)?;
-            std::fs::rename(&tmp, &bitv)?;
+            self.write_piece_map(&row.info_hash, &bytes)?;
+        }
+        let mut options = self.torrent_options(row, was_paused);
+        if !peers.is_empty() {
+            options.initial_peers = Some(peers);
         }
         let res = self
             .session
-            .add_torrent(source, Some(self.torrent_options(row, was_paused)))
+            .add_torrent(source, Some(options))
             .await
             .with_context(|| format!("re-adding {}", row.imdb_id))?;
         if let AddTorrentResponse::Added(_, handle) = res {

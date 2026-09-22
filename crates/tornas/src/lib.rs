@@ -212,7 +212,7 @@ pub async fn run_server(
     }
     info!("shutting down");
     watchdog::stopping();
-    engine.session.stop().await;
+    engine.shutdown().await;
     Ok(())
 }
 

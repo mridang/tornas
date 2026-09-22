@@ -210,3 +210,49 @@ async fn queue_holds_extra_downloads() {
     seeder.stop().await;
     engine.session.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn restart_keeps_everything_downloaded() {
+    let _serial = SERIAL.lock().await;
+    // Pieces are 256 KiB here; librqbit on its own saves the piece map only every
+    // 16 MiB, so without tornas's shutdown step a restart would forget up to that.
+    let (tmp, fx, _seeder, peer) = setup(1, 24).await;
+    let data = tmp.path().join("data");
+    let tmdb = fake_tmdb().await;
+    let mut opts = server_opts(&data, tmdb, 1 << 30);
+    opts.ratelimit_download = Some(2 * 1024 * 1024);
+    let engine = Engine::start(opts.clone()).await.unwrap();
+    let id = fx[0].imdb_id.clone();
+    engine.add_movie(req(&fx[0], &peer)).await.unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let before = loop {
+        let m = engine.get_movie(&id).unwrap().unwrap();
+        if m.progress_bytes >= 6 * 1024 * 1024 {
+            assert!(!m.finished, "finished too fast to test anything");
+            break m.progress_bytes;
+        }
+        assert!(Instant::now() < deadline, "download never got going");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    engine.shutdown().await;
+    // Pausing drops half-finished pieces, so this can be a little under `before`.
+    let stopped_at = engine.get_movie(&id).unwrap().unwrap().progress_bytes;
+    assert!(stopped_at > 0, "had {before} bytes before shutdown");
+    drop(engine);
+
+    let engine = Engine::start(opts).await.unwrap();
+    wait_state(
+        &engine,
+        &id,
+        &["downloading", "paused", "done", "seeding"],
+        30,
+    )
+    .await;
+    let after = engine.get_movie(&id).unwrap().unwrap().progress_bytes;
+    assert!(
+        after >= stopped_at,
+        "restart lost pieces: had {stopped_at} bytes at shutdown, {after} after"
+    );
+    engine.shutdown().await;
+}

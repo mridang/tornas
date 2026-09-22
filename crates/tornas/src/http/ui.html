@@ -117,8 +117,8 @@ aside{display:flex;flex-direction:column;gap:16px}
 
 /* forms */
 label{display:block;font-size:13px;font-weight:600;margin:0 0 5px}
-input[type=text]{width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;outline:none}
-input[type=text]:focus{border-color:var(--accent)}
+input[type=text],input[type=number]{width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:9px 11px;outline:none}
+input[type=text]:focus,input[type=number]:focus{border-color:var(--accent)}
 .field{margin-bottom:11px}
 .err{color:var(--bad);font-size:13px;margin-top:8px;min-height:1em}
 .okmsg{color:var(--ok);font-size:13px;margin-top:8px}
@@ -353,8 +353,8 @@ async function doResume() {
   catch (e) { toast(e.message); }
 }
 let heroKey = null;
-function activeText(n) {
-  return (n ? n + " downloading. " : "Nothing downloading. ") +
+function activeText(n, q) {
+  return (n ? n + " downloading" + (q ? ", " + q + " queued. " : ". ") : q ? q + " queued. " : "Nothing downloading. ") +
     "If something goes wrong, pause everything; it resumes on its own after the time you pick.";
 }
 // Rebuilt only when the pause state or the chosen preset changes, so the buttons
@@ -363,10 +363,11 @@ function renderHero() {
   const p = S.pause, hero = $("hero"), body = $("hero-body"), act = $("hero-actions");
   const dflt = p.default_duration_secs;
   if (chosen === null) chosen = dflt;
-  const active = S.movies.filter((m) => !m.finished).length;
+  const active = S.movies.filter((m) => !m.finished && m.state !== "queued").length;
+  const queued = S.movies.filter((m) => m.state === "queued").length;
   const key = JSON.stringify([p.paused, p.indefinite, p.until, p.reason, chosen, dflt]);
   if (key === heroKey) {
-    const a = $("hero-active"); if (a) a.textContent = activeText(active);
+    const a = $("hero-active"); if (a) a.textContent = activeText(active, queued);
     return;
   }
   heroKey = key;
@@ -375,7 +376,7 @@ function renderHero() {
     hero.classList.remove("paused");
     body.append(
       h("h1", {}, "Everything is running"),
-      h("p", { class: "muted", id: "hero-active" }, activeText(active)),
+      h("p", { class: "muted", id: "hero-active" }, activeText(active, queued)),
       h("div", { class: "chips", role: "group", "aria-label": "Pause for" },
         PRESETS.map(([v, label]) => h("button", {
           class: "chip", type: "button", "aria-pressed": String(chosen === v),
@@ -546,8 +547,9 @@ function renderAdd() {
 function editLimits(m) {
   const t = m.torrent || {}, dlg = $("limits-dlg");
   $("limits-title").textContent = "Limits for " + m.title;
-  $("lim-down").value = t.download_limit ? t.download_limit : "";
-  $("lim-up").value = t.upload_limit ? t.upload_limit : "";
+  const size = (v) => !v ? "" : v % 1048576 === 0 ? v / 1048576 + "M" : v % 1024 === 0 ? v / 1024 + "K" : String(v);
+  $("lim-down").value = size(t.download_limit);
+  $("lim-up").value = size(t.upload_limit);
   $("lim-peers").value = t.peer_limit ? t.peer_limit : "";
   dlg.showModal();
   dlg.addEventListener("close", async () => {
