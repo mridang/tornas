@@ -120,6 +120,7 @@ Source-address ACL in netacl.rs, applied as the outermost HTTP layer. Default al
 - Expose librqbit's interface binding (`bind_device_name`, SO_BINDTODEVICE) and SOCKS5
   proxy (`ConnectionOptions::proxy_url`) as `--bind-device` / `--socks-proxy`. Binding is
   what makes a VPN a kill switch instead of best-effort.
+- Multiple disks: several download directories, each with its own budget, placing new movies on the disk with most room (decided 2026-09-22: later).
 - Cloudflare Access (tunnel + Zero Trust JWT validation on /api only) for browser admin from machines that cannot run Tailscale. Free except a domain; does not help Stremio or DLNA, which cannot authenticate, so the player routes would stay on the address ACL. Revisit only if remote browser admin is wanted.
 - Poster caching, active-stream eviction protection, measured disk usage, HTTP-level integration tests, systemd install test in CI, `tornas install`/`uninstall` subcommands.
 
@@ -131,3 +132,11 @@ Global pause: PUT/GET/DELETE /api/pause, `tornas pause|resume`, default 3h via -
 
 ## Config validation and Ansible (2026-09-21)
 `tornas config check [FILE] [--env FILE]` validates config.toml (serde_ignored reports unknown keys as errors, plus shared semantic rules) and env files (values parsed by clap itself in a child process with a cleared environment, iterating to report every bad line). The semantic rules also run at server startup. Verified to agree with real startup on 11 tricky values; clap accepts only exact lowercase true/false for booleans. Role in ansible/roles/tornas uses it as `validate:`. Release .sha256 assets now hold the hash alone; the apt repo also publishes an armored key (tornas.asc).
+
+## Feature decisions (2026-09-22)
+Build (engine switches, off/empty by default unless noted): interface binding (TORNAS_BIND_DEVICE), uTP, peer blocklist URL, peer allowlist URL, global and per-torrent peer limits, simultaneous hash checks (default 3), per-torrent speed limits via PATCH /api/movies/{id}, announce port, DHT port and bootstrap nodes, local discovery switch (on by default).
+Build (tornas features): USB disk watch that triggers the pause while TORNAS_REQUIRE_MOUNT is on, low-memory defaults on boards with about 1 GB or less, bandwidth schedule by time of day, download queue (TORNAS_MAX_ACTIVE_DOWNLOADS, unlimited by default), Raspberry Pi docs for keeping logs off the SD card. Tests (systemd install job in CI, HTTP integration tests): no preference given.
+Keep as-is: client name stays "rqbit" (trackers recognise it), peer timeouts, tracker announce interval, write-through cache (off, buggy), leech-only (off).
+Skipped: SOCKS5 proxy (binding covers the VPN case), open-stream eviction protection, measured disk usage, temperature/throttling metrics, self-signed HTTPS, install/uninstall commands, TV series, TCP-off, rqbit watch folder, rqbit web UI/API, Postgres persistence, rqbit Prometheus exporter.
+Later: multiple disks, Cloudflare Access, MSE/PE (upstream PR ikatson/rqbit#633).
+Release blocker found: semantic-release-cargo's verify step needs a registry token and a `version` on git dependencies, so it fails on librqbit's git deps; proposed replacing it with @semantic-release/exec bumping [workspace.package].version.
