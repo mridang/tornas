@@ -6,6 +6,7 @@
 use std::{net::SocketAddr, path::Path, time::Duration};
 
 use axum::{Router, extract::Path as AxPath, routing::get};
+use clap::Parser;
 use serde_json::json;
 use tornas::{
     config::{FixturesOpts, ServerOpts},
@@ -38,43 +39,34 @@ async fn fake_tmdb() -> SocketAddr {
 }
 
 fn server_opts(data_dir: &Path, tmdb: SocketAddr, budget: u64) -> ServerOpts {
-    ServerOpts {
-        data_dir: data_dir.to_owned(),
-        disk_budget: budget,
-        min_free: 0,
-        stream_grace: Duration::from_secs(0),
-        keep_seeding: false,
-        pause_duration: Duration::from_secs(2),
-        require_mount: false,
-        api_token: None,
-        auto_update: None,
-        update_repo: String::new(),
-        stall_timeout: Duration::from_secs(0),
-        mdns_name: "test".into(),
-        disable_mdns: true,
-        config: None,
-        ipv4_only: false,
-        allow_from: vec![],
-        trusted_proxies: vec![],
-        disable_trackers: true,
-        tracker_sources: vec![],
-        tracker_schemes: None,
-        extra_trackers: vec![],
-        sweep_interval: Duration::from_secs(3600),
-        http_listen: "127.0.0.1:0".parse().unwrap(),
-        public_url: None,
-        tls_cert: None,
-        tls_key: None,
-        tmdb_token: Some("test".into()),
-        tmdb_api_key: None,
-        tmdb_base_url: format!("http://{tmdb}/3"),
-        dlna_name: None,
-        disable_dlna: true,
-        listen_port: None,
-        disable_dht: true,
-        disable_upnp_port_forward: true,
-        ratelimit_download: None,
-        ratelimit_upload: None,
+    // Built through the real argument parser, so tests get production defaults and
+    // new settings never break this helper.
+    let args = [
+        "tornas".to_owned(),
+        "server".to_owned(),
+        format!("--data-dir={}", data_dir.display()),
+        format!("--disk-budget={budget}"),
+        "--min-free=0".to_owned(),
+        "--stream-grace=0s".to_owned(),
+        "--pause-duration=2s".to_owned(),
+        "--stall-timeout=0s".to_owned(),
+        "--sweep-interval=1h".to_owned(),
+        "--http-listen=127.0.0.1:0".to_owned(),
+        "--mdns-name=test".to_owned(),
+        "--disable-mdns".to_owned(),
+        "--disable-trackers".to_owned(),
+        "--disable-dlna".to_owned(),
+        "--disable-dht".to_owned(),
+        "--disable-upnp-port-forward".to_owned(),
+        "--tmdb-token=test".to_owned(),
+        format!("--tmdb-base-url=http://{tmdb}/3"),
+    ];
+    match tornas::config::Cli::try_parse_from(args)
+        .expect("test options parse")
+        .cmd
+    {
+        tornas::config::Command::Server(o) => o,
+        _ => unreachable!(),
     }
 }
 

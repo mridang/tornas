@@ -163,6 +163,59 @@ pub struct ServerOpts {
     #[arg(long, env = "TORNAS_KEEP_SEEDING")]
     pub keep_seeding: bool,
 
+    /// Bind all torrent traffic (peers, DHT, trackers, local discovery) to this
+    /// network interface, such as wg0. If the interface goes away, torrent traffic
+    /// stops instead of using the normal route. The web interface, Stremio and DLNA
+    /// are not affected. Router port forwarding is turned off when this is set.
+    #[arg(long, env = "TORNAS_BIND_DEVICE")]
+    pub bind_device: Option<String>,
+
+    /// Also use uTP (BEP 29) for peer connections. Experimental upstream.
+    #[arg(long, env = "TORNAS_UTP")]
+    pub utp: bool,
+
+    /// Refuse peers in these address ranges: an http(s) URL or a local file, plain
+    /// or gzip. Downloaded lists are cached, so an offline boot uses the last copy.
+    #[arg(long, env = "TORNAS_PEER_BLOCKLIST")]
+    pub peer_blocklist: Option<String>,
+
+    /// Only talk to peers in these address ranges: an http(s) URL or a local file.
+    /// If it cannot be loaded and there is no cached copy, the server does not start.
+    #[arg(long, env = "TORNAS_PEER_ALLOWLIST")]
+    pub peer_allowlist: Option<String>,
+
+    /// Maximum peers per torrent. Defaults to 128, or 40 on boards with about 1 GB
+    /// of memory or less. Individual movies can override it through the API.
+    #[arg(long, env = "TORNAS_PEER_LIMIT", value_parser = clap::value_parser!(u32).range(1..))]
+    pub peer_limit: Option<u32>,
+
+    /// Torrents verified at the same time on startup and when added. Defaults to 3,
+    /// or 1 on boards with about 1 GB of memory or less.
+    #[arg(long, env = "TORNAS_CONCURRENT_CHECKS", value_parser = clap::value_parser!(u32).range(1..))]
+    pub concurrent_checks: Option<u32>,
+
+    /// Port announced to trackers and the DHT, for when the router forwards a
+    /// different external port to this box. Defaults to the listen port.
+    #[arg(long, env = "TORNAS_ANNOUNCE_PORT", value_parser = clap::value_parser!(u16).range(1..))]
+    pub announce_port: Option<u16>,
+
+    /// Fixed UDP port for the DHT. Random (and remembered) when unset.
+    #[arg(long, env = "TORNAS_DHT_PORT", value_parser = clap::value_parser!(u16).range(1..))]
+    pub dht_port: Option<u16>,
+
+    /// DHT bootstrap nodes as host:port, comma separated. Built-in list when unset.
+    #[arg(long, env = "TORNAS_DHT_BOOTSTRAP", value_delimiter = ',')]
+    pub dht_bootstrap: Vec<String>,
+
+    /// Turn off local peer discovery (BEP 14 multicast on the home network).
+    #[arg(long, env = "TORNAS_LSD_DISABLE")]
+    pub disable_lsd: bool,
+
+    /// Download at most this many movies at once; the rest wait in a queue and start
+    /// in the order they were added. Unlimited when unset.
+    #[arg(long, env = "TORNAS_MAX_ACTIVE_DOWNLOADS", value_parser = clap::value_parser!(u32).range(1..))]
+    pub max_active_downloads: Option<u32>,
+
     /// How long "pause everything" lasts before resuming on its own.
     #[arg(long, env = "TORNAS_PAUSE_DURATION", default_value = "3h", value_parser = humantime::parse_duration)]
     pub pause_duration: Duration,

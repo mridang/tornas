@@ -13,8 +13,9 @@ use std::str::FromStr;
 
 use anyhow::{Context, bail};
 use librqbit::{
-    AddTorrent, AddTorrentOptions, AddTorrentResponse, DhtSessionConfig, ListenerOptions, Session,
-    SessionOptions, SessionPersistenceConfig, api::TorrentIdOrHash, limits::LimitsConfig,
+    AddTorrent, AddTorrentOptions, AddTorrentResponse, DhtSessionConfig, ListenerMode,
+    ListenerOptions, Session, SessionOptions, SessionPersistenceConfig, api::TorrentIdOrHash,
+    limits::LimitsConfig,
 };
 use librqbit::{ManagedTorrent, dht::Id20};
 type ManagedTorrentHandle = Arc<ManagedTorrent>;
@@ -84,6 +85,10 @@ pub struct Engine {
     pause: parking_lot::Mutex<Option<PauseState>>,
     /// Serialises add + evict so two concurrent adds cannot both pass the budget check.
     add_lock: tokio::sync::Mutex<()>,
+    /// Machine-dependent limits actually in force.
+    pub tuning: crate::tuning::Tuning,
+    pub blocklist: crate::tuning::IpListStatus,
+    pub allowlist: crate::tuning::IpListStatus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,17 +215,45 @@ impl Engine {
             warn!("no TMDB credentials: movies will be catalogued by IMDb id only");
         }
 
-        let listen_addr: SocketAddr = (Ipv6Addr::UNSPECIFIED, opts.listen_port.unwrap_or(0)).into();
+        let listen_port = opts.listen_port.unwrap_or(0);
+        let listen_addr: SocketAddr = if ipv6 {
+            (Ipv6Addr::UNSPECIFIED, listen_port).into()
+        } else {
+            (std::net::Ipv4Addr::UNSPECIFIED, listen_port).into()
+        };
+        let tuning = crate::tuning::from_opts(&opts);
+        let blocklist = crate::tuning::prepare_ip_list(
+            opts.peer_blocklist.as_deref(),
+            &data_dir.join("peer-blocklist.cache"),
+            "blocklist",
+            false,
+        )
+        .await?;
+        let allowlist = crate::tuning::prepare_ip_list(
+            opts.peer_allowlist.as_deref(),
+            &data_dir.join("peer-allowlist.cache"),
+            "allowlist",
+            true,
+        )
+        .await?;
+        // A router port mapping points at the LAN address, which is not where traffic
+        // flows once it is bound to a VPN interface.
+        let upnp = !opts.disable_upnp_port_forward && opts.bind_device.is_none();
+        if opts.bind_device.is_some() && !opts.disable_upnp_port_forward {
+            info!("router port forwarding disabled: torrent traffic is bound to an interface");
+        }
         let sopts = SessionOptions {
             dht: if opts.disable_dht {
                 None
             } else {
                 Some(DhtSessionConfig {
+                    port: opts.dht_port,
+                    bootstrap_addrs: (!opts.dht_bootstrap.is_empty())
+                        .then(|| opts.dht_bootstrap.clone()),
                     persistence: Some(librqbit::dht::DhtPersistenceConfig {
                         config_filename: Some(session_dir.join("dht.json")),
                         ..Default::default()
                     }),
-                    ..Default::default()
                 })
             },
             persistence: Some(SessionPersistenceConfig::Json {
@@ -228,11 +261,24 @@ impl Engine {
             }),
             fastresume: true,
             listen: Some(ListenerOptions {
+                mode: if opts.utp {
+                    ListenerMode::TcpAndUtp
+                } else {
+                    ListenerMode::TcpOnly
+                },
                 listen_addr,
-                enable_upnp_port_forwarding: !opts.disable_upnp_port_forward,
+                enable_upnp_port_forwarding: upnp,
+                announce_port: opts.announce_port,
+                ipv4_only: !ipv6,
                 ..Default::default()
             }),
+            bind_device_name: opts.bind_device.clone(),
             ipv4_only: !ipv6,
+            disable_local_service_discovery: opts.disable_lsd,
+            blocklist_url: blocklist.loaded_from.clone(),
+            allowlist_url: allowlist.loaded_from.clone(),
+            peer_limit: Some(tuning.peer_limit as usize),
+            concurrent_init_limit: Some(tuning.concurrent_checks as usize),
             ratelimits: LimitsConfig {
                 download_bps: opts.ratelimit_download.and_then(NonZeroU32::new),
                 upload_bps: opts.ratelimit_upload.and_then(NonZeroU32::new),
@@ -259,6 +305,9 @@ impl Engine {
             progress_seen: parking_lot::Mutex::new(std::collections::HashMap::new()),
             pause: parking_lot::Mutex::new(pause0),
             add_lock: tokio::sync::Mutex::new(()),
+            tuning,
+            blocklist,
+            allowlist,
         });
         *engine.weak.write() = Arc::downgrade(&engine);
         // The tracker list is fetched by the background refresh loop, whose first tick
@@ -1193,6 +1242,12 @@ impl Engine {
             out.push(
                 "no TMDB credentials configured: movies are catalogued by IMDb id only".into(),
             );
+        }
+        if let Some(n) = &self.blocklist.note {
+            out.push(format!("peer blocklist: {n}"));
+        }
+        if let Some(n) = &self.allowlist.note {
+            out.push(format!("peer allowlist: {n}"));
         }
         out
     }

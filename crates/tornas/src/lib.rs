@@ -33,6 +33,7 @@ pub mod netacl;
 pub mod tmdb;
 pub mod trackers;
 pub mod tui;
+pub mod tuning;
 pub mod units;
 pub mod update;
 pub mod watchdog;
