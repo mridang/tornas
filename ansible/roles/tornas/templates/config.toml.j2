@@ -37,3 +37,18 @@ take = {{ s.take | int }}
 schemes = {{ s.schemes | to_json }}
 {% endif %}
 {% endfor %}
+{% for w in tornas_bandwidth_schedule %}
+
+[[bandwidth.schedule]]
+{% if w.days is defined %}
+days = {{ w.days | to_json }}
+{% endif %}
+from = {{ w['from'] | string | to_json }}
+to = {{ w.to | string | to_json }}
+{% if w.download is defined %}
+download = {{ w.download | string | to_json }}
+{% endif %}
+{% if w.upload is defined %}
+upload = {{ w.upload | string | to_json }}
+{% endif %}
+{% endfor %}

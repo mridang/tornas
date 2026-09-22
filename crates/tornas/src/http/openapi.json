@@ -226,7 +226,7 @@
           "movies"
         ],
         "summary": "Update a movie",
-        "description": "Only `last_used_at` is writable. Setting it to \"now\" moves the movie to the back of the eviction queue.",
+        "description": "Set any of the fields; at least one is required and unknown fields are refused. `last_used_at` set to \"now\" moves the movie to the back of the eviction queue. Changing a limit reloads the torrent in the engine; its downloaded pieces are kept, so nothing is checked or downloaded again.",
         "requestBody": {
           "required": true,
           "content": {
@@ -247,8 +247,48 @@
                         ]
                       }
                     ]
+                  },
+                  "download_limit": {
+                    "oneOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "bytes per second"
+                      },
+                      {
+                        "type": "string",
+                        "example": "2M",
+                        "description": "size per second, like 500K or 2M"
+                      }
+                    ],
+                    "nullable": true,
+                    "description": "null removes the movie's own limit"
+                  },
+                  "upload_limit": {
+                    "oneOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "bytes per second"
+                      },
+                      {
+                        "type": "string",
+                        "example": "2M",
+                        "description": "size per second, like 500K or 2M"
+                      }
+                    ],
+                    "nullable": true,
+                    "description": "null removes the movie's own limit"
+                  },
+                  "peer_limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10000,
+                    "nullable": true,
+                    "description": "peers for this torrent; null goes back to the default"
                   }
-                }
+                },
+                "additionalProperties": false
               }
             }
           }
@@ -271,6 +311,9 @@
             "$ref": "#/components/responses/Error"
           },
           "401": {
+            "$ref": "#/components/responses/Error"
+          },
+          "409": {
             "$ref": "#/components/responses/Error"
           }
         },
@@ -848,6 +891,22 @@
           },
           "added_at": {
             "type": "integer"
+          },
+          "download_limit": {
+            "type": "integer",
+            "nullable": true
+          },
+          "upload_limit": {
+            "type": "integer",
+            "nullable": true
+          },
+          "peer_limit": {
+            "type": "integer",
+            "nullable": true
+          },
+          "private": {
+            "type": "boolean",
+            "description": "BEP 27 private torrent"
           }
         }
       },
@@ -914,7 +973,8 @@
               "done",
               "paused",
               "error",
-              "missing"
+              "missing",
+              "queued"
             ]
           },
           "progress_bytes": {
@@ -1003,6 +1063,25 @@
           "listen_addr": {
             "type": "string",
             "nullable": true
+          },
+          "download_limit": {
+            "type": "integer",
+            "nullable": true,
+            "description": "global download limit in force (after the bandwidth schedule), bytes/s; null = unlimited"
+          },
+          "upload_limit": {
+            "type": "integer",
+            "nullable": true,
+            "description": "global upload limit in force, bytes/s; null = unlimited"
+          },
+          "schedule_window": {
+            "type": "integer",
+            "nullable": true,
+            "description": "index of the [[bandwidth.schedule]] window in force"
+          },
+          "queued": {
+            "type": "integer",
+            "description": "downloads waiting for a slot (--max-active-downloads)"
           }
         }
       },
@@ -1051,6 +1130,15 @@
           },
           "default_duration_secs": {
             "type": "integer"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "disk_missing"
+            ],
+            "nullable": true,
+            "description": "why everything is paused; a disk_missing pause lifts when the disk returns and cannot be resumed by hand"
           }
         }
       }

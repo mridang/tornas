@@ -71,6 +71,9 @@
           - tornas_effective.json.trackers.schemes == tornas_trackers_schemes
           - tornas_effective.json.keep_seeding == (tornas_keep_seeding | bool)
           - tornas_effective.json.dlna == not (tornas_disable_dlna | bool)
+          - tornas_effective.json.engine.utp == (tornas_utp | bool)
+          - tornas_effective.json.engine.local_discovery == not (tornas_disable_lsd | bool)
+          - (tornas_effective.json.bandwidth.schedule | length) == (tornas_bandwidth_schedule | length)
         fail_msg: >-
           tornas is running but not with the configuration Ansible wrote. Compare
           `curl -s localhost:{{ tornas_http_listen.split(':') | last }}/api/config`

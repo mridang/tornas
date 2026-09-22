@@ -62,3 +62,23 @@ schemes = ["https", "udp", "http"]
 add = ["udp://tracker.opentrackr.org:1337/announce"]
 # Never added: full URLs, hostnames, or *.domain globs.
 block = ["*.example-bad-tracker.net"]
+
+# Speed limits by time of day, in local time. The first matching window wins;
+# outside every window the global TORNAS_RATELIMIT_* values apply. A window whose
+# `to` is earlier than `from` runs past midnight; `days` is the day it starts on
+# (empty or missing = every day). Sizes are per second; "unlimited" lifts the
+# limit; leaving `download` or `upload` out keeps the global value.
+#
+# [[bandwidth.schedule]]
+# days = ["mon", "tue", "wed", "thu", "fri"]
+# from = "18:00"
+# to = "23:30"
+# download = "1M"
+# upload = "128K"
+#
+# [[bandwidth.schedule]]
+# days = ["fri"]
+# from = "23:30"
+# to = "08:00"
+# download = "unlimited"
+# upload = "unlimited"

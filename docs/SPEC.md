@@ -139,4 +139,9 @@ Build (tornas features): USB disk watch that triggers the pause while TORNAS_REQ
 Keep as-is: client name stays "rqbit" (trackers recognise it), peer timeouts, tracker announce interval, write-through cache (off, buggy), leech-only (off).
 Skipped: SOCKS5 proxy (binding covers the VPN case), open-stream eviction protection, measured disk usage, temperature/throttling metrics, self-signed HTTPS, install/uninstall commands, TV series, TCP-off, rqbit watch folder, rqbit web UI/API, Postgres persistence, rqbit Prometheus exporter.
 Later: multiple disks, Cloudflare Access, MSE/PE (upstream PR ikatson/rqbit#633).
+Built (2026-09-22): all of the above. Notes from building it:
+- librqbit takes per-torrent limits and peer counts only when a torrent is added, so changing them deletes the torrent from the session and re-adds it from saved metadata (meta/{hash}.torrent) with the in-memory piece map written back as its .bitv first; no re-hash. Metadata is now saved for magnets too, since re-adding a magnet waits on peers.
+- Global limits are live-settable (session.ratelimits), which the bandwidth schedule uses every 30 s.
+- Under systemd the service has its own mount namespace: a pulled USB disk stays mounted there and a replugged one never appears. The disk watch therefore also checks /sys/dev/block/MAJ:MIN, and once PID 1's mountinfo shows the disk back it exits (75) so systemd restarts it with a fresh namespace. CI simulates the pull with scsi_debug where the runner kernel has it.
+- Blocklist fetch failures fall back to a cached copy (fail open with a warning); the allowlist fails closed. List URLs are shown without query strings or credentials.
 Release blocker found: semantic-release-cargo's verify step needs a registry token and a `version` on git dependencies, so it fails on librqbit's git deps; replaced it with @semantic-release/exec running scripts/set-version.sh, which bumps [workspace.package].version and refreshes Cargo.lock.

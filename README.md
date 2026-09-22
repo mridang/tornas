@@ -86,6 +86,66 @@ Three layers, later ones win: the TOML config file (found automatically as above
 | `--disable-dlna` | `TORNAS_DLNA_DISABLE` | | |
 | `--listen-port` | `RQBIT_LISTEN_PORT` | random | BitTorrent port |
 | `--disable-dht` | `RQBIT_DHT_DISABLE` | | |
+| `--ratelimit-download` / `--ratelimit-upload` | `TORNAS_RATELIMIT_DOWNLOAD` / `_UPLOAD` | unlimited | global limits in bytes/s; see [Bandwidth schedule](#bandwidth-schedule) |
+| `--max-active-downloads` | `TORNAS_MAX_ACTIVE_DOWNLOADS` | unlimited | download this many at once; the rest wait, oldest first |
+
+### BitTorrent engine
+
+Settings passed to librqbit when it starts. Defaults suit a home connection; change them only for a reason.
+
+| Flag | Env | Default | Meaning |
+|---|---|---|---|
+| `--bind-device` | `TORNAS_BIND_DEVICE` | | send all torrent traffic through one interface, e.g. `wg0` for a VPN. If the interface is missing the server does not start (so nothing leaks), and router port forwarding is turned off |
+| `--utp` | `TORNAS_UTP` | off | also accept and make uTP (BitTorrent over UDP) connections |
+| `--peer-blocklist` | `TORNAS_PEER_BLOCKLIST` | | IP list (P2P or CIDR format, file or http(s) URL, `.gz` fine) of peers never to talk to. Downloaded at start and cached; if it cannot be fetched and there is no cached copy, the server starts without it and warns |
+| `--peer-allowlist` | `TORNAS_PEER_ALLOWLIST` | | only ever talk to peers on this list. Unlike the blocklist, a missing list stops the server from starting |
+| `--peer-limit` | `TORNAS_PEER_LIMIT` | 128 (40 on small boards) | peers per torrent; each movie can override it |
+| `--concurrent-checks` | `TORNAS_CONCURRENT_CHECKS` | 3 (1 on small boards) | torrents hash-checked at once after a restart |
+| `--announce-port` | `TORNAS_ANNOUNCE_PORT` | the listen port | port told to trackers and DHT, when a router forwards a different one |
+| `--dht-port` | `TORNAS_DHT_PORT` | random | fixed UDP port for DHT, for firewall rules |
+| `--dht-bootstrap` | `TORNAS_DHT_BOOTSTRAP` | librqbit's list | comma-separated `host:port` nodes to join the DHT through |
+| `--disable-lsd` | `TORNAS_LSD_DISABLE` | off | stop finding peers on the LAN by multicast (BEP 14) |
+
+A "small board" is one with less than about 1.25 GB of memory (Pi 3, Pi Zero 2, 1 GB Orange Pi). `GET /api/config` shows what was chosen under `engine`, along with the state of the peer lists.
+
+### Per-movie limits
+
+Each movie can have its own download and upload limit and peer count, on top of the global ones: the **Limits** button on its card in the dashboard, or
+
+```bash
+curl -X PATCH localhost:3030/api/movies/tt0111161 -H 'content-type: application/json' \
+  -d '{"download_limit": "2M", "upload_limit": "256K", "peer_limit": 30}'
+```
+
+`null` removes a limit. librqbit only takes these when a torrent is added, so changing them reloads the torrent in the engine. The piece map is carried over, so nothing is checked or downloaded again.
+
+### Download queue
+
+With `--max-active-downloads 2`, only two movies download at a time and the rest show as **queued**, starting oldest first as slots free up. Finished movies, paused ones and streams from disk do not count. Unset, everything downloads at once.
+
+### Bandwidth schedule
+
+Limits that change with the time of day go in `config.toml`. The first window that matches the local time wins; outside all windows the global `--ratelimit-*` values apply. A window whose `to` is earlier than its `from` runs past midnight, and `days` names the day it starts on.
+
+```toml
+# Weekday evenings: keep the connection free for everyone else.
+[[bandwidth.schedule]]
+days = ["mon", "tue", "wed", "thu", "fri"]
+from = "18:00"
+to = "23:30"
+download = "1M"
+upload = "128K"
+
+# Friday night into Saturday morning: no limits.
+[[bandwidth.schedule]]
+days = ["fri"]
+from = "23:30"
+to = "08:00"
+download = "unlimited"
+upload = "unlimited"
+```
+
+Leave out `download` or `upload` to keep the global value for that direction. The schedule is checked every 30 seconds and changes apply to running downloads at once. `tornas config check` catches bad times, unknown days and empty windows. `/api/status` shows the limits in force (`session.download_limit`, `session.schedule_window`), as do the dashboard and the `tornas_ratelimit_*_bytes_per_second` metrics.
 
 ## Public trackers
 
@@ -106,7 +166,7 @@ JSON over HTTP. Writes need `Authorization: Bearer <TORNAS_API_TOKEN>` when a to
 | GET | `/api/movies?state=` | list, optionally filtered by state |
 | POST | `/api/movies` | add `{imdb_id, magnet | torrent_url | torrent_base64, initial_peers?}` → 201 + `Location`; 404 unknown IMDb id, 409 duplicate, 422 invalid, 502 TMDB down, 507 cannot make room |
 | GET | `/api/movies/{imdb_id}` | one movie |
-| PATCH | `/api/movies/{imdb_id}` | `{"last_used_at": "now" \| <unix seconds>}` to reorder the eviction queue |
+| PATCH | `/api/movies/{imdb_id}` | any of `last_used_at` (`"now"` or unix seconds, reorders the eviction queue), `download_limit` / `upload_limit` (bytes/s or `"2M"`, `null` clears), `peer_limit` (`null` clears) |
 | DELETE | `/api/movies/{imdb_id}` | remove and delete files → 204 |
 | GET | `/api/budget`, `/api/session`, `/api/events?limit=`, `/api/status`, `/api/config` | read-only system resources |
 | GET/POST | `/api/trackers` | public tracker feed status / refresh now |
@@ -143,10 +203,36 @@ tornas doctor          # CPU hashing support, disk placement, temperature
 * **Unit hardening and limits.** The shipped unit runs as the `tornas` user (declared in `systemd/tornas.sysusers.conf`, directories in `tornas.tmpfiles.conf`), raises `LimitNOFILE` for peer sockets, caps `TasksMax` and memory (`MemoryHigh=70%`, `MemoryMax=85%`) so a small board never swaps to death, and applies the usual sandboxing (`ProtectSystem=strict`, `PrivateTmp`, `RestrictAddressFamilies`, ...).
 * **Watchdog.** Under systemd the unit is `Type=notify` with `WatchdogSec=90`: the process pings systemd only while a liveness probe passes (the catalog answers, the torrent session is not wedged, the data directory is readable), so a hung server is restarted. `tornas health` runs the same probe from a script and exits 0/1; the Docker image uses it as its HEALTHCHECK; `/healthz` returns 503 when it fails. A full disk is deliberately *not* a probe failure, since killing a working daemon does not free space; it appears as a warning instead (`tornas status`, `/api/status`, and the `tornas_disk_below_min_free` metric).
 * **Mount guard.** `--require-mount` / `TORNAS_REQUIRE_MOUNT=true` (set in the shipped unit) refuses to start when the data dir is on the root filesystem, so a USB disk that failed to mount cannot fill the SD card. The unit also has `RequiresMountsFor=/var/lib/tornas` and waits for `network-online.target`.
+* **Disk pulled out.** With the mount guard on, the server also watches the disk while running. If the USB cable comes out (the disk's device disappears, or its directory becomes unreadable), everything pauses at once, the dashboard says why, and **Resume** is refused until the disk is back. When it is mounted again the pause lifts by itself; under systemd, where the service cannot see new mounts, the server restarts to pick the disk up. A manual pause is kept as it was. Metrics: `tornas_data_disk_mounted`, `tornas_paused_for_missing_disk`.
 * **Auto-update.** Set `TORNAS_AUTO_UPDATE=24h` (or `--auto-update`) and the server checks GitHub on that interval with a little jitter, downloads the release binary for its CPU, verifies the SHA-256 against the published checksum, swaps the executable atomically, flushes its state and re-executes itself in place. The PID and systemd notify socket survive, so it works under systemd, Docker and plain shells alike. For manual control use `sudo tornas self-update --restart`; `--check` exits 10 when an update exists and `--version` pins one.
 * **Stalled downloads.** A download with no progress for `--stall-timeout` (default 6h) that is outside the stream grace window is evicted, logged as a `stalled` event and counted in `tornas_stalled_evictions_total`, so a dead torrent never holds budget. Set `0s` to disable.
 * **API token.** `TORNAS_API_TOKEN=<secret>` protects every write under `/api` and the log endpoint with `Authorization: Bearer <secret>` (or `X-Api-Token`). Reads, the Stremio routes and video stay open so players keep working. Rejections count in `tornas_unauthorized_total`.
 * **Hashing.** Piece checks use aws-lc-rs, which selects the CPU's SHA-1 instructions at runtime (ARMv8 SHA extension on Pi 3/4/5 in 64-bit mode, SHA-NI on x86). `tornas doctor` shows the detected flags, benchmarks SHA-1 with the same code path the engine uses, and checks whether the data dir is on the SD card. ARMv7 CPUs and 32-bit OS builds have no SHA extension, which is one more reason to run 64-bit Pi OS.
+
+### Keeping the SD card alive
+
+On a Pi the SD card holds the OS, and constant small writes wear it out. tornas keeps downloads, the catalog and session state in `/var/lib/tornas`, which the mount guard keeps on the USB disk. What is left is logging:
+
+* **journald in memory.** The most effective change. Logs are lost on reboot, but nothing is written to the card:
+
+  ```bash
+  sudo mkdir -p /etc/systemd/journald.conf.d
+  printf '[Journal]\nStorage=volatile\nRuntimeMaxUse=32M\n' | sudo tee /etc/systemd/journald.conf.d/volatile.conf
+  sudo systemctl restart systemd-journald
+  ```
+
+* **Or keep tornas logs on the USB disk.** `TORNAS_LOG_DIR=/var/lib/tornas/logs` writes daily files next to the downloads (rotated, `TORNAS_LOG_KEEP` days kept), and `TORNAS_LOG=warn` keeps the journal copy small.
+* **No swap on the card.** On Pi OS, `sudo dphys-swapfile swapoff && sudo systemctl disable dphys-swapfile`. The unit's memory caps and the small-board defaults keep tornas within a 1 GB board without it.
+* **`noatime`.** Add it to the SD card's root entry in `/etc/fstab`, so reads do not turn into writes.
+
+When torrent traffic goes through a VPN with `TORNAS_BIND_DEVICE=wg0`, make the service wait for the tunnel so it does not start before the interface exists:
+
+```bash
+sudo systemctl edit tornas
+# [Unit]
+# After=wg-quick@wg0.service
+# Wants=wg-quick@wg0.service
+```
 
 ## Logs
 
@@ -220,7 +306,8 @@ Per-torrent series carry only an `imdb_id` label; the descriptive fields (info h
 | Peers and transfer | `tornas_fetched_bytes_total`, `tornas_uploaded_bytes_total`, `tornas_download_bytes_per_second`, `tornas_upload_bytes_per_second`, `tornas_peers{state}`, `tornas_peers_live{transport}`, `tornas_peer_connections_total{transport,family,outcome}`, `tornas_peer_steals_total`, `tornas_blocked_connections_total{direction}` |
 | DHT (UDP) | `tornas_dht_enabled`, `tornas_dht_nodes{family}`, `tornas_dht_outstanding_requests` |
 | Tracker feed | `tornas_trackers_enabled`, `tornas_trackers_active{scheme}`, `tornas_tracker_list_age_seconds`, `tornas_tracker_list_rejected`, `tornas_tracker_list_deduplicated`, `tornas_tracker_source_up{source}`, `tornas_tracker_source_accepted{source}` |
-| Pause | `tornas_paused`, `tornas_pause_remaining_seconds`, `tornas_pauses_total`, `tornas_resumes_total{trigger}` |
+| Pause and disk | `tornas_paused`, `tornas_paused_for_missing_disk`, `tornas_data_disk_mounted`, `tornas_pause_remaining_seconds`, `tornas_pauses_total`, `tornas_resumes_total{trigger}` |
+| Limits and queue | `tornas_ratelimit_download_bytes_per_second`, `tornas_ratelimit_upload_bytes_per_second` (0 = unlimited), `tornas_bandwidth_window`, `tornas_queued_downloads`, `tornas_max_active_downloads`, `tornas_peer_limit`, `tornas_concurrent_checks` |
 | Events | `tornas_adds_total{result}`, `tornas_evictions_total`, `tornas_evicted_bytes_total`, `tornas_stalled_evictions_total`, `tornas_removals_total`, `tornas_seeding_paused_total`, `tornas_streams_total{kind}`, `tornas_stream_bytes_total`, `tornas_tmdb_errors_total`, `tornas_updates_installed_total` |
 | HTTP | `tornas_http_requests_total{route,method,status}`, `tornas_http_request_duration_seconds{route}` (histogram), `tornas_unauthorized_total`, `tornas_forbidden_source_total` |
 
