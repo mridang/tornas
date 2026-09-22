@@ -27,7 +27,7 @@ jobs:
         uses: mridang/action-runner-common@v1
 
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7.0.1
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -71,7 +71,7 @@ jobs:
 
       - name: Checkout existing repository
         if: steps.debs.outputs.found == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7.0.1
         continue-on-error: true
         with:
           ref: gh-pages
