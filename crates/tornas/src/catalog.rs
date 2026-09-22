@@ -34,6 +34,16 @@ pub struct TorrentRow {
     pub video_file_idx: usize,
     pub video_file_name: String,
     pub added_at: i64,
+    /// BEP 27 private torrent: never given public trackers.
+    #[serde(default)]
+    pub private: bool,
+    /// Per-movie overrides, in bytes per second and peers. `None` uses the global value.
+    #[serde(default)]
+    pub download_limit: Option<u32>,
+    #[serde(default)]
+    pub upload_limit: Option<u32>,
+    #[serde(default)]
+    pub peer_limit: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -81,11 +91,43 @@ CREATE TABLE IF NOT EXISTS events (
 );
 "#;
 
+/// Add columns introduced after the first release to existing catalogs.
+fn migrate(conn: &Connection) -> anyhow::Result<()> {
+    let have: Vec<String> = conn
+        .prepare("SELECT name FROM pragma_table_info('torrents')")?
+        .query_map([], |r| r.get(0))?
+        .collect::<Result<_, _>>()?;
+    for (col, ddl) in [
+        (
+            "private",
+            "ALTER TABLE torrents ADD COLUMN private INTEGER NOT NULL DEFAULT 0",
+        ),
+        (
+            "download_limit",
+            "ALTER TABLE torrents ADD COLUMN download_limit INTEGER",
+        ),
+        (
+            "upload_limit",
+            "ALTER TABLE torrents ADD COLUMN upload_limit INTEGER",
+        ),
+        (
+            "peer_limit",
+            "ALTER TABLE torrents ADD COLUMN peer_limit INTEGER",
+        ),
+    ] {
+        if !have.iter().any(|c| c == col) {
+            conn.execute_batch(ddl)?;
+        }
+    }
+    Ok(())
+}
+
 impl Catalog {
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let conn = Connection::open(path).with_context(|| format!("opening catalog {path:?}"))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -95,6 +137,7 @@ impl Catalog {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
+        migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -132,7 +175,8 @@ impl Catalog {
     pub fn insert_torrent(&self, t: &TorrentRow) -> anyhow::Result<()> {
         self.conn.lock().execute(
             "INSERT OR REPLACE INTO torrents (info_hash, imdb_id, magnet, size_bytes, video_file_idx,
-                video_file_name, added_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                video_file_name, added_at, private, download_limit, upload_limit, peer_limit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 t.info_hash,
                 t.imdb_id,
@@ -140,7 +184,11 @@ impl Catalog {
                 t.size_bytes as i64,
                 t.video_file_idx as i64,
                 t.video_file_name,
-                t.added_at
+                t.added_at,
+                t.private,
+                t.download_limit,
+                t.upload_limit,
+                t.peer_limit
             ],
         )?;
         Ok(())
@@ -173,7 +221,26 @@ impl Catalog {
             video_file_idx: r.get::<_, i64>("video_file_idx")? as usize,
             video_file_name: r.get("video_file_name")?,
             added_at: r.get("added_at")?,
+            private: r.get("private")?,
+            download_limit: r.get("download_limit")?,
+            upload_limit: r.get("upload_limit")?,
+            peer_limit: r.get("peer_limit")?,
         })
+    }
+
+    /// Set a movie's overrides; `None` clears one back to the global value.
+    pub fn set_limits(
+        &self,
+        info_hash: &str,
+        download: Option<u32>,
+        upload: Option<u32>,
+        peers: Option<u32>,
+    ) -> anyhow::Result<()> {
+        self.conn.lock().execute(
+            "UPDATE torrents SET download_limit = ?2, upload_limit = ?3, peer_limit = ?4 WHERE info_hash = ?1",
+            params![info_hash, download, upload, peers],
+        )?;
+        Ok(())
     }
 
     pub fn list_movies(&self) -> anyhow::Result<Vec<Movie>> {
@@ -300,15 +367,66 @@ mod tests {
             video_file_idx: 0,
             video_file_name: "a.mp4".into(),
             added_at: 10,
+            private: false,
+            download_limit: None,
+            upload_limit: Some(1000),
+            peer_limit: None,
         })
         .unwrap();
         assert_eq!(c.list_movies().unwrap().len(), 1);
         assert_eq!(c.torrent_for_movie("tt1").unwrap().unwrap().size_bytes, 123);
+        assert_eq!(
+            c.torrent_for_movie("tt1").unwrap().unwrap().upload_limit,
+            Some(1000)
+        );
+        c.set_limits("abc", Some(5), None, Some(20)).unwrap();
+        let t = c.torrent_for_movie("tt1").unwrap().unwrap();
+        assert_eq!(
+            (t.download_limit, t.upload_limit, t.peer_limit),
+            (Some(5), None, Some(20))
+        );
         c.touch("tt1", 99).unwrap();
         assert_eq!(c.get_movie("tt1").unwrap().unwrap().last_used_at, 99);
         assert!(c.delete_movie("tt1").unwrap());
         assert!(c.list_torrents().unwrap().is_empty());
         c.add_event("test", "hello").unwrap();
         assert_eq!(c.recent_events(5).unwrap()[0].message, "hello");
+    }
+}
+
+#[cfg(test)]
+mod migration_tests {
+    use super::*;
+
+    #[test]
+    fn upgrades_an_old_catalog() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        {
+            // The first release's schema, before private and the limit columns.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE movies (imdb_id TEXT PRIMARY KEY, tmdb_id INTEGER, title TEXT NOT NULL,
+                   year INTEGER, overview TEXT, poster_url TEXT, backdrop_url TEXT, runtime_min INTEGER,
+                   genres TEXT NOT NULL DEFAULT '[]', rating REAL, tmdb_json TEXT, added_at INTEGER NOT NULL,
+                   last_used_at INTEGER NOT NULL);
+                 CREATE TABLE torrents (info_hash TEXT PRIMARY KEY, imdb_id TEXT NOT NULL, magnet TEXT NOT NULL,
+                   size_bytes INTEGER NOT NULL, video_file_idx INTEGER NOT NULL, video_file_name TEXT NOT NULL,
+                   added_at INTEGER NOT NULL);
+                 INSERT INTO movies VALUES ('tt1', 1, 'M', 2000, NULL, NULL, NULL, 90, '[]', NULL, NULL, 1, 1);
+                 INSERT INTO torrents VALUES ('h', 'tt1', 'magnet:?x', 5, 0, 'a.mp4', 1);",
+            )
+            .unwrap();
+        }
+        let c = Catalog::open(&path).unwrap();
+        let t = c.torrent_for_movie("tt1").unwrap().unwrap();
+        assert!(!t.private);
+        assert_eq!(
+            (t.download_limit, t.upload_limit, t.peer_limit),
+            (None, None, None)
+        );
+        // opening again is a no-op
+        drop(c);
+        Catalog::open(&path).unwrap();
     }
 }

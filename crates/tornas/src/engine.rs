@@ -77,12 +77,16 @@ pub struct Engine {
     pub torrents_dir: PathBuf,
     /// Saved .torrent files for movies added from a file rather than a magnet.
     meta_dir: PathBuf,
+    /// librqbit's session state, including each torrent's saved piece map.
+    session_dir: PathBuf,
     started: Instant,
     weak: parking_lot::RwLock<std::sync::Weak<Engine>>,
     /// info_hash -> (progress bytes, when it last changed), for stall detection.
     progress_seen: parking_lot::Mutex<std::collections::HashMap<String, (u64, i64)>>,
     /// Global kill switch. `Some` while everything is paused.
     pause: parking_lot::Mutex<Option<PauseState>>,
+    /// Set while the data disk is missing (only watched with --require-mount).
+    disk_missing: std::sync::atomic::AtomicBool,
     /// Serialises add + evict so two concurrent adds cannot both pass the budget check.
     add_lock: tokio::sync::Mutex<()>,
     /// Machine-dependent limits actually in force.
@@ -300,10 +304,12 @@ impl Engine {
             trackers,
             torrents_dir,
             meta_dir,
+            session_dir: session_dir.clone(),
             started: Instant::now(),
             weak: parking_lot::RwLock::new(std::sync::Weak::new()),
             progress_seen: parking_lot::Mutex::new(std::collections::HashMap::new()),
             pause: parking_lot::Mutex::new(pause0),
+            disk_missing: std::sync::atomic::AtomicBool::new(false),
             add_lock: tokio::sync::Mutex::new(()),
             tuning,
             blocklist,
@@ -356,7 +362,7 @@ impl Engine {
         for row in known {
             if !in_session.iter().any(|(h, _)| h == &row.info_hash) {
                 info!(imdb = row.imdb_id, "re-adding torrent missing from session");
-                let source = match self.source_for(&row.magnet) {
+                let source = match self.source_for(&row) {
                     Ok(s) => s,
                     Err(e) => {
                         warn!("could not load source for {}: {e:#}", row.imdb_id);
@@ -365,16 +371,7 @@ impl Engine {
                 };
                 let res = self
                     .session
-                    .add_torrent(
-                        source,
-                        Some(AddTorrentOptions {
-                            overwrite: true,
-                            only_files: Some(vec![row.video_file_idx]),
-                            trackers: Some(self.trackers.current()),
-                            paused: self.is_paused(),
-                            ..Default::default()
-                        }),
-                    )
+                    .add_torrent(source, Some(self.torrent_options(&row, self.is_paused())))
                     .await;
                 if let Err(e) = res {
                     warn!("could not re-add {}: {e:#}", row.imdb_id);
@@ -384,13 +381,138 @@ impl Engine {
         Ok(())
     }
 
+    /// Options to (re)start a catalogued torrent: only the video file, public trackers
+    /// unless private, and this movie's own limits.
+    fn torrent_options(&self, row: &TorrentRow, paused: bool) -> AddTorrentOptions {
+        AddTorrentOptions {
+            overwrite: true,
+            only_files: Some(vec![row.video_file_idx]),
+            trackers: (!row.private).then(|| self.trackers.current()),
+            paused,
+            ratelimits: LimitsConfig {
+                download_bps: row.download_limit.and_then(NonZeroU32::new),
+                upload_bps: row.upload_limit.and_then(NonZeroU32::new),
+            },
+            peer_limit: row.peer_limit.map(|p| p as usize),
+            ..Default::default()
+        }
+    }
+
+    /// Restart one torrent with fresh options (new trackers or limits), which librqbit
+    /// only reads when a torrent starts. Removing a torrent from the session deletes
+    /// its saved piece map, which would force a full re-hash of the file on re-add, so
+    /// the current bitfield is taken from memory and written back before re-adding;
+    /// fastresume then spot-checks a few pieces instead of hashing everything. The
+    /// re-add uses the saved metadata, so nothing is fetched from peers.
+    pub async fn reload_torrent(&self, row: &TorrentRow) -> anyhow::Result<()> {
+        let Some(h) = self.handle_for(&row.info_hash) else {
+            // Not loaded; the new options apply the next time it starts.
+            return Ok(());
+        };
+        let was_paused = h.is_paused();
+        if !was_paused {
+            // Pausing writes the piece map out, so the copy below is current.
+            if let Err(e) = self.session.pause(&h).await {
+                debug!("pause before reload: {e:#}");
+            }
+        }
+        let bitv = self.session_dir.join(format!("{}.bitv", row.info_hash));
+        // The bitfield on disk is written asynchronously and can lag behind; take the
+        // exact one from memory instead (the torrent is paused, so it is final).
+        let saved: Option<Vec<u8>> = librqbit::Api::new(self.session.clone(), None)
+            .api_dump_haves(TorrentIdOrHash::Id(h.id()))
+            .ok()
+            .map(|(bf, _)| bf.as_raw_slice().to_vec());
+        // Movies added before metadata was kept: save it now, while it is in memory,
+        // so the re-add below does not have to fetch it from peers.
+        let meta = self.meta_path(&row.info_hash);
+        if !meta.is_file()
+            && let Ok(bytes) = h.with_metadata(|m| m.torrent_bytes.clone())
+        {
+            std::fs::write(&meta, &bytes).with_context(|| format!("saving {meta:?}"))?;
+        }
+        let id = h.id();
+        drop(h);
+        let source = self.source_for(row)?;
+        self.session
+            .delete(TorrentIdOrHash::Id(id), false)
+            .await
+            .with_context(|| format!("reloading {}", row.imdb_id))?;
+        if let Some(bytes) = saved {
+            let tmp = bitv.with_extension("bitv.tmp");
+            std::fs::write(&tmp, &bytes)?;
+            std::fs::rename(&tmp, &bitv)?;
+        }
+        let res = self
+            .session
+            .add_torrent(source, Some(self.torrent_options(row, was_paused)))
+            .await
+            .with_context(|| format!("re-adding {}", row.imdb_id))?;
+        if let AddTorrentResponse::Added(_, handle) = res {
+            self.watch_completion_arc(handle);
+        }
+        Ok(())
+    }
+
+    /// Set or clear one movie's speed and peer limits, and apply them now.
+    pub async fn set_movie_limits(
+        &self,
+        imdb_id: &str,
+        download: Option<u32>,
+        upload: Option<u32>,
+        peers: Option<u32>,
+    ) -> anyhow::Result<MovieView> {
+        let _guard = self.add_lock.lock().await;
+        let row = self
+            .catalog
+            .torrent_for_movie(imdb_id)?
+            .ok_or_else(|| fault(FaultKind::NotFound, "no such movie"))?;
+        self.catalog
+            .set_limits(&row.info_hash, download, upload, peers)?;
+        let row = TorrentRow {
+            download_limit: download,
+            upload_limit: upload,
+            peer_limit: peers,
+            ..row
+        };
+        self.reload_torrent(&row).await?;
+        let fmt = |v: Option<u32>, unit: &str| match v {
+            Some(v) if unit == "peers" => format!("{v} peers"),
+            Some(v) => crate::units::human_rate(u64::from(v)),
+            None => "default".to_owned(),
+        };
+        self.catalog.add_event(
+            "limits",
+            &format!(
+                "{imdb_id}: download {}, upload {}, {}",
+                fmt(download, "bps"),
+                fmt(upload, "bps"),
+                match peers {
+                    Some(p) => format!("{p} peers"),
+                    None => "default peers".to_owned(),
+                }
+            ),
+        )?;
+        self.get_movie(imdb_id)?
+            .ok_or_else(|| fault(FaultKind::NotFound, "no such movie"))
+    }
+
     /// Turn the stored source (magnet link or `file://` path to a saved .torrent) into an add request.
-    fn source_for(&self, stored: &str) -> anyhow::Result<AddTorrent<'static>> {
-        if let Some(path) = stored.strip_prefix("file://") {
+    fn meta_path(&self, info_hash: &str) -> PathBuf {
+        self.meta_dir.join(format!("{info_hash}.torrent"))
+    }
+
+    /// How to re-add a catalogued torrent: from its saved metadata when there is
+    /// one (instant, no network), otherwise from the stored magnet or file.
+    fn source_for(&self, row: &TorrentRow) -> anyhow::Result<AddTorrent<'static>> {
+        if let Ok(bytes) = std::fs::read(self.meta_path(&row.info_hash)) {
+            return Ok(AddTorrent::from_bytes(bytes));
+        }
+        if let Some(path) = row.magnet.strip_prefix("file://") {
             let bytes = std::fs::read(path).with_context(|| format!("reading {path}"))?;
             Ok(AddTorrent::from_bytes(bytes))
         } else {
-            Ok(AddTorrent::from_url(stored.to_owned()))
+            Ok(AddTorrent::from_url(row.magnet.clone()))
         }
     }
 
@@ -404,6 +526,10 @@ impl Engine {
         let mut interval = tokio::time::interval(cfg.refresh.max(Duration::from_secs(60)));
         loop {
             interval.tick().await;
+            // The tracker cache lives in the data directory.
+            if self.is_disk_missing() {
+                continue;
+            }
             match self.trackers.refresh().await {
                 Ok(true) if cfg.reannounce_active => {
                     if let Err(e) = self.reannounce_active().await {
@@ -434,25 +560,8 @@ impl Engine {
             if private || stats.finished || h.is_paused() {
                 continue;
             }
-            let id = h.id();
             drop(h);
-            let source = self.source_for(&row.magnet)?;
-            self.session.delete(TorrentIdOrHash::Id(id), false).await?;
-            let res = self
-                .session
-                .add_torrent(
-                    source,
-                    Some(AddTorrentOptions {
-                        overwrite: true,
-                        only_files: Some(vec![row.video_file_idx]),
-                        trackers: Some(list.clone()),
-                        ..Default::default()
-                    }),
-                )
-                .await?;
-            if let AddTorrentResponse::Added(_, handle) = res {
-                self.watch_completion_arc(handle);
-            }
+            self.reload_torrent(&row).await?;
             n += 1;
         }
         if n > 0 {
@@ -472,9 +581,6 @@ impl Engine {
     }
 
     fn watch_completion_arc(&self, handle: ManagedTorrentHandle) {
-        if self.opts.keep_seeding {
-            return;
-        }
         let Some(engine) = self.weak.read().upgrade() else {
             return;
         };
@@ -483,10 +589,18 @@ impl Engine {
                 warn!("waiting for completion: {e:#}");
                 return;
             }
-            if handle.is_paused() {
+            // A finished download frees a queue slot for the next one.
+            if engine.opts.keep_seeding || handle.is_paused() {
+                if let Err(e) = engine.balance_queue().await {
+                    debug!("queue after completion: {e:#}");
+                }
                 return;
             }
-            match engine.session.pause(&handle).await {
+            let paused = engine.session.pause(&handle).await;
+            if let Err(e) = engine.balance_queue().await {
+                debug!("queue after completion: {e:#}");
+            }
+            match paused {
                 Ok(()) => {
                     let name = handle.name().unwrap_or_default();
                     info!("download complete, paused seeding: {name}");
@@ -774,12 +888,15 @@ impl Engine {
             self.trackers.current()
         };
         // Persist the source so restarts and re-announces can re-add it.
+        // Keep the torrent's metadata for every source, magnets included, so a restart
+        // or reload never has to fetch it from peers again.
+        let meta_path = self.meta_path(&info_hash);
+        let meta_bytes = torrent_bytes
+            .clone()
+            .unwrap_or_else(|| listing.torrent_bytes.clone());
+        std::fs::write(&meta_path, &meta_bytes).with_context(|| format!("saving {meta_path:?}"))?;
         let stored_source = match &torrent_bytes {
-            Some(b) => {
-                let path = self.meta_dir.join(format!("{info_hash}.torrent"));
-                std::fs::write(&path, b).with_context(|| format!("saving {path:?}"))?;
-                format!("file://{}", path.display())
-            }
+            Some(_) => format!("file://{}", meta_path.display()),
             None => req.magnet.clone().unwrap_or_default(),
         };
         let files: Vec<(usize, String, u64)> = listing
@@ -811,6 +928,7 @@ impl Engine {
                     } else {
                         Some(public_trackers.clone())
                     },
+                    paused: self.is_paused() || self.queue_is_full(),
                     ..Default::default()
                 }),
             )
@@ -833,6 +951,10 @@ impl Engine {
             video_file_idx: video_idx,
             video_file_name: video_name,
             added_at: now,
+            private,
+            download_limit: None,
+            upload_limit: None,
+            peer_limit: None,
         })?;
         let msg = format!(
             "added {} ({}) {}{}{}",
@@ -895,8 +1017,13 @@ impl Engine {
             Some(h) => {
                 let stats = h.stats();
                 let live = stats.live.as_ref();
+                let mut state = state_label(&stats);
+                if state == "paused" && !self.is_paused() {
+                    // Not finished, not globally paused: held back by the queue.
+                    state = "queued";
+                }
                 MovieView {
-                    state: state_label(&stats).into(),
+                    state: state.into(),
                     progress_bytes: stats.progress_bytes,
                     total_bytes: stats.total_bytes,
                     finished: stats.finished,
@@ -942,6 +1069,9 @@ impl Engine {
     }
 
     pub fn status(&self) -> anyhow::Result<StatusView> {
+        if self.is_disk_missing() {
+            return Ok(self.status_without_disk());
+        }
         let (cands, used) = self.candidates()?;
         let (disk_free, disk_total) = disk_usage(&self.torrents_dir)?;
         let next_eviction = cands
@@ -976,6 +1106,48 @@ impl Engine {
         })
     }
 
+    /// True when a new download would exceed `--max-active-downloads`.
+    fn queue_is_full(&self) -> bool {
+        let Some(max) = self.opts.max_active_downloads else {
+            return false;
+        };
+        let active = self.session.with_torrents(|it| {
+            it.filter(|(_, h)| !h.is_paused() && !h.stats().finished)
+                .count()
+        });
+        active >= max as usize
+    }
+
+    /// What can be shown with the data disk gone: the pause, warnings and the
+    /// in-memory session numbers. The library itself lives on the missing disk.
+    fn status_without_disk(&self) -> StatusView {
+        let snap = self.session.stats_snapshot();
+        StatusView {
+            pause: self.pause_view(),
+            version: env!("CARGO_PKG_VERSION"),
+            hostname: gethostname::gethostname().to_string_lossy().into_owned(),
+            warnings: self.warnings(),
+            budget: BudgetView {
+                limit: self.opts.disk_budget,
+                used: 0,
+                min_free: self.opts.min_free,
+                disk_free: 0,
+                disk_total: 0,
+                next_eviction: None,
+            },
+            session: SessionView {
+                download_bps: snap.download_speed.as_bytes(),
+                upload_bps: snap.upload_speed.as_bytes(),
+                peers_live: u64::from(snap.peers.live),
+                uptime_secs: self.started.elapsed().as_secs(),
+                torrents: self.session.with_torrents(|it| it.count()),
+                listen_addr: self.session.listen_addr(),
+            },
+            movies: vec![],
+            events: vec![],
+        }
+    }
+
     // ---- global pause -----------------------------------------------------
 
     pub fn is_paused(&self) -> bool {
@@ -991,6 +1163,7 @@ impl Engine {
             until: st.as_ref().and_then(|p| p.until),
             remaining_secs: st.as_ref().and_then(|p| p.until).map(|u| (u - now).max(0)),
             indefinite: st.as_ref().is_some_and(|p| p.until.is_none()),
+            reason: st.as_ref().map(|p| p.reason),
             default_duration_secs: self.opts.pause_duration.as_secs(),
         }
     }
@@ -1035,8 +1208,13 @@ impl Engine {
         let st = PauseState {
             since,
             until: (!indefinite).then(|| now + dur.as_secs() as i64),
+            reason: PauseReason::Manual,
         };
-        store_pause(&self.opts.data_dir, Some(&st))?;
+        // With the data disk gone its directory may be the bare mount point on the
+        // boot disk, so nothing is written until it is back.
+        if !self.is_disk_missing() {
+            store_pause(&self.opts.data_dir, Some(&st))?;
+        }
         *self.pause.lock() = Some(st);
         let n = self.apply_pause().await;
         let msg = if indefinite {
@@ -1048,7 +1226,7 @@ impl Engine {
             )
         };
         warn!("{msg}");
-        self.catalog.add_event("pause", &msg)?;
+        let _ = self.catalog.add_event("pause", &msg);
         crate::metrics::paused();
         Ok(self.pause_view())
     }
@@ -1056,24 +1234,20 @@ impl Engine {
     /// Lift the pause. Finished movies stay paused unless `--keep-seeding`.
     /// Returns how many torrents were resumed.
     pub async fn resume_all(&self, trigger: &'static str) -> anyhow::Result<usize> {
+        if self.is_disk_missing() {
+            return Err(fault(
+                FaultKind::Conflict,
+                "the data disk is not mounted; tornas resumes on its own when it is back",
+            ));
+        }
         let _guard = self.add_lock.lock().await;
         if self.pause.lock().take().is_none() {
             return Ok(0);
         }
         store_pause(&self.opts.data_dir, None)?;
-        let handles: Vec<ManagedTorrentHandle> = self
-            .session
-            .with_torrents(|it| it.map(|(_, h)| h.clone()).collect());
-        let mut n = 0;
-        for h in handles {
-            if !h.is_paused() || (h.stats().finished && !self.opts.keep_seeding) {
-                continue;
-            }
-            match self.session.unpause(&h).await {
-                Ok(()) => n += 1,
-                Err(e) => warn!("resume {}: {e:#}", h.info_hash().as_string()),
-            }
-        }
+        // Restart through the queue, so a resume never starts more downloads than
+        // --max-active-downloads allows.
+        let n = self.balance_queue().await?;
         let msg = format!("resumed ({trigger}): {n} torrents restarted");
         info!("{msg}");
         self.catalog.add_event("resume", &msg)?;
@@ -1081,13 +1255,124 @@ impl Engine {
         Ok(n)
     }
 
+    // ---- download queue ---------------------------------------------------
+
+    /// Run at most `--max-active-downloads` unfinished torrents, oldest first, and
+    /// hold the rest paused. Finished movies are resumed only with --keep-seeding.
+    /// Returns how many torrents it started. Does nothing while paused.
+    pub async fn balance_queue(&self) -> anyhow::Result<usize> {
+        if self.is_paused() {
+            return Ok(0);
+        }
+        let max = self
+            .opts
+            .max_active_downloads
+            .map(|m| m as usize)
+            .unwrap_or(usize::MAX);
+        let mut rows = self.catalog.list_torrents()?;
+        rows.sort_by_key(|r| (r.added_at, r.info_hash.clone()));
+        let mut started = 0;
+        let mut slot = 0;
+        for row in rows {
+            let Some(h) = self.handle_for(&row.info_hash) else {
+                continue;
+            };
+            let stats = h.stats();
+            if state_label(&stats) == "error" {
+                continue;
+            }
+            let want_running = if stats.finished {
+                self.opts.keep_seeding
+            } else {
+                slot += 1;
+                slot <= max
+            };
+            match (want_running, h.is_paused()) {
+                (true, true) => match self.session.unpause(&h).await {
+                    Ok(()) => started += 1,
+                    Err(e) => debug!("start {}: {e:#}", row.imdb_id),
+                },
+                (false, false) if !stats.finished => {
+                    if let Err(e) = self.session.pause(&h).await {
+                        debug!("queue {}: {e:#}", row.imdb_id);
+                    } else {
+                        info!("queued {}: {max} downloads already running", row.imdb_id);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(started)
+    }
+
+    // ---- data disk watch --------------------------------------------------
+
+    pub fn is_disk_missing(&self) -> bool {
+        self.disk_missing.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// The data directory is on its own filesystem and readable. Only meaningful
+    /// with --require-mount; otherwise always true.
+    fn data_disk_ok(&self) -> bool {
+        if !self.opts.require_mount {
+            return true;
+        }
+        matches!(
+            crate::health::is_on_separate_filesystem(&self.opts.data_dir),
+            Ok(true)
+        ) && std::fs::read_dir(&self.torrents_dir).is_ok()
+    }
+
+    /// Pause for a missing disk: in memory only, never persisted, lifted when the
+    /// disk returns.
+    async fn pause_for_disk(&self) {
+        let _guard = self.add_lock.lock().await;
+        if self.pause.lock().is_some() {
+            return;
+        }
+        *self.pause.lock() = Some(PauseState {
+            since: now_secs(),
+            until: None,
+            reason: PauseReason::DiskMissing,
+        });
+        let n = self.apply_pause().await;
+        crate::metrics::paused();
+        warn!(
+            "the data disk at {} is not mounted: paused everything ({n} torrents) until it is back",
+            self.opts.data_dir.display()
+        );
+    }
+
     /// Resume once the pause expires, and while paused re-pause anything that
     /// came loose (a re-announce or restore racing the pause).
     pub async fn check_pause(&self) -> anyhow::Result<()> {
+        let ok = self.data_disk_ok();
+        let was_missing = self
+            .disk_missing
+            .swap(!ok, std::sync::atomic::Ordering::SeqCst);
+        if ok && was_missing {
+            info!("the data disk is back");
+            let _ = self.catalog.add_event("disk", "the data disk came back");
+        }
+        let reason = self.pause.lock().as_ref().map(|p| p.reason);
+        match disk_action(ok, reason) {
+            DiskAction::PauseForDisk => {
+                self.pause_for_disk().await;
+                return Ok(());
+            }
+            DiskAction::ResumeFromDisk => {
+                self.resume_all("disk").await?;
+                return Ok(());
+            }
+            DiskAction::Nothing => {}
+        }
         let st = self.pause.lock().clone();
         match st {
-            None => {}
-            Some(p) if p.until.is_some_and(|u| now_secs() >= u) => {
+            None => {
+                self.balance_queue().await?;
+            }
+            // A timed pause does not end while the disk is missing.
+            Some(p) if ok && p.until.is_some_and(|u| now_secs() >= u) => {
                 self.resume_all("auto").await?;
             }
             Some(_) => {
@@ -1211,6 +1496,12 @@ impl Engine {
     /// watchdog gates systemd restarts on this, and a full disk is a condition to
     /// report, not a reason to kill a working daemon. See `warnings()`.
     pub fn probe(&self) -> anyhow::Result<()> {
+        if self.is_disk_missing() {
+            // The catalog lives on the missing disk. The daemon is doing the right
+            // thing (everything paused); a restart would only fail the mount guard.
+            let _ = self.session.with_torrents(|it| it.count());
+            return Ok(());
+        }
         self.catalog.recent_events(1)?;
         let _ = self.session.with_torrents(|it| it.count());
         disk_usage(&self.torrents_dir)?;
@@ -1220,6 +1511,12 @@ impl Engine {
     /// Operational problems worth surfacing, without failing health checks.
     pub fn warnings(&self) -> Vec<String> {
         let mut out = Vec::new();
+        if self.is_disk_missing() {
+            out.push(format!(
+                "the data disk at {} is not mounted: everything is paused until it is back",
+                self.opts.data_dir.display()
+            ));
+        }
         if let Ok((free, _)) = disk_usage(&self.torrents_dir)
             && free < self.opts.min_free
         {
@@ -1317,6 +1614,9 @@ impl Engine {
         interval.tick().await;
         loop {
             interval.tick().await;
+            if self.is_disk_missing() {
+                continue;
+            }
             if let Err(e) = self.evict_stalled().await {
                 warn!("stall check: {e:#}");
             }
@@ -1335,6 +1635,36 @@ pub struct PauseState {
     pub since: i64,
     /// `None` means until explicitly resumed.
     pub until: Option<i64>,
+    #[serde(default)]
+    pub reason: PauseReason,
+}
+
+/// Why everything is paused.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PauseReason {
+    /// Someone pressed pause (dashboard, CLI or API).
+    #[default]
+    Manual,
+    /// The data disk disappeared; lifted automatically when it comes back.
+    DiskMissing,
+}
+
+/// What the disk watch should do, given whether the data disk is usable and the
+/// current pause (if any). Pure, so it can be tested without real mounts.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DiskAction {
+    Nothing,
+    PauseForDisk,
+    ResumeFromDisk,
+}
+
+pub fn disk_action(disk_ok: bool, pause: Option<PauseReason>) -> DiskAction {
+    match (disk_ok, pause) {
+        (false, None) => DiskAction::PauseForDisk,
+        (true, Some(PauseReason::DiskMissing)) => DiskAction::ResumeFromDisk,
+        _ => DiskAction::Nothing,
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1344,6 +1674,7 @@ pub struct PauseView {
     pub until: Option<i64>,
     pub remaining_secs: Option<i64>,
     pub indefinite: bool,
+    pub reason: Option<PauseReason>,
     /// What a pause lasts when no duration is given.
     pub default_duration_secs: u64,
 }
@@ -1426,4 +1757,31 @@ pub fn is_video(name: &str) -> bool {
     ["mp4", "mkv", "avi", "mov", "webm", "m4v", "ts", "wmv"]
         .iter()
         .any(|ext| lower.ends_with(&format!(".{ext}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disk_watch_decisions() {
+        use DiskAction::*;
+        use PauseReason::*;
+        // Disk gone and nothing paused: pause.
+        assert_eq!(disk_action(false, None), PauseForDisk);
+        // Disk gone during a manual pause: keep the manual pause.
+        assert_eq!(disk_action(false, Some(Manual)), Nothing);
+        assert_eq!(disk_action(false, Some(DiskMissing)), Nothing);
+        // Disk back: lift only a pause the disk caused.
+        assert_eq!(disk_action(true, Some(DiskMissing)), ResumeFromDisk);
+        assert_eq!(disk_action(true, Some(Manual)), Nothing);
+        assert_eq!(disk_action(true, None), Nothing);
+    }
+
+    #[test]
+    fn old_pause_files_still_load() {
+        // pause.json written before reasons existed.
+        let st: PauseState = serde_json::from_str(r#"{"since":1,"until":2}"#).unwrap();
+        assert_eq!(st.reason, PauseReason::Manual);
+    }
 }
