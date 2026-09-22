@@ -44,6 +44,8 @@ pub fn is_on_separate_filesystem(path: &Path) -> anyhow::Result<bool> {
 /// and systems without sysfs count as present.
 pub fn backing_device_present(path: &Path) -> bool {
     match nix::sys::stat::stat(path) {
+        // dev_t is u64 on Linux but i32 on macOS.
+        #[allow(clippy::unnecessary_cast)]
         Ok(st) => device_present_in(Path::new("/sys/dev/block"), st.st_dev as u64),
         Err(_) => false,
     }
