@@ -1361,6 +1361,7 @@ impl Engine {
             crate::health::is_on_separate_filesystem(&self.opts.data_dir),
             Ok(true)
         ) && std::fs::read_dir(&self.torrents_dir).is_ok()
+            && crate::health::backing_device_present(&self.torrents_dir)
     }
 
     /// Pause for a missing disk: in memory only, never persisted, lifted when the
@@ -1405,6 +1406,19 @@ impl Engine {
                 return Ok(());
             }
             DiskAction::Nothing => {}
+        }
+        // Under systemd this process has a private mount namespace, so a disk that
+        // is plugged back in never shows up here. When the host has it mounted
+        // again, exit and let systemd start a fresh process that sees it.
+        if !ok
+            && std::env::var_os("INVOCATION_ID").is_some()
+            && crate::health::host_has_disk(&self.opts.data_dir)
+        {
+            warn!("the data disk is mounted again on the host; restarting to pick it up");
+            let _ = self
+                .catalog
+                .add_event("disk", "the data disk came back; restarting");
+            std::process::exit(75);
         }
         let st = self.pause.lock().clone();
         match st {
