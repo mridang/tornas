@@ -461,6 +461,25 @@ async fn api_config(State(e): State<AppState>) -> impl IntoResponse {
         "dlna": !e.opts.disable_dlna,
         "dht": !e.opts.disable_dht,
         "tmdb": e.tmdb.is_some(),
+        "bandwidth": e.file_config.bandwidth,
+        "ratelimit_download": e.opts.ratelimit_download,
+        "ratelimit_upload": e.opts.ratelimit_upload,
+        "max_active_downloads": e.opts.max_active_downloads,
+        "require_mount": e.opts.require_mount,
+        "engine": {
+            "utp": e.opts.utp,
+            "bind_device": e.opts.bind_device,
+            "announce_port": e.opts.announce_port,
+            "dht_port": e.opts.dht_port,
+            "dht_bootstrap": e.opts.dht_bootstrap,
+            "local_discovery": !e.opts.disable_lsd,
+            "peer_limit": e.tuning.peer_limit,
+            "concurrent_checks": e.tuning.concurrent_checks,
+            "memory_bytes": e.tuning.memory_bytes,
+            "small_board": e.tuning.small_board,
+            "blocklist": e.blocklist,
+            "allowlist": e.allowlist,
+        },
     }))
 }
 
@@ -547,38 +566,105 @@ async fn api_get(
     }
 }
 
-/// Partial update. Today the only writable field is `last_used_at`
-/// (unix seconds, or the string "now"), which moves the movie to the back of
-/// the eviction queue.
-#[derive(Deserialize)]
-struct MoviePatch {
-    last_used_at: Option<serde_json::Value>,
-}
-
+/// Partial update. Writable fields:
+/// - `last_used_at`: unix seconds, or "now"; moves the movie in the eviction queue.
+/// - `download_limit` / `upload_limit`: bytes per second as a number or a size
+///   like "2M"; null goes back to no per-movie limit.
+/// - `peer_limit`: peers for this torrent; null goes back to the default.
+///
+/// Changing a limit reloads the torrent in the engine, keeping its downloaded pieces.
 async fn api_patch(
     State(e): State<AppState>,
     Path(imdb_id): Path<String>,
-    AppJson(patch): AppJson<MoviePatch>,
+    AppJson(patch): AppJson<serde_json::Map<String, serde_json::Value>>,
 ) -> ApiResult<impl IntoResponse> {
-    let Some(v) = patch.last_used_at else {
-        return Err(ApiError::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "invalid",
-            "nothing to update: supported fields are last_used_at",
-        ));
+    const FIELDS: [&str; 4] = [
+        "last_used_at",
+        "download_limit",
+        "upload_limit",
+        "peer_limit",
+    ];
+    let invalid = |msg: String| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "invalid", msg);
+    if let Some(k) = patch.keys().find(|k| !FIELDS.contains(&k.as_str())) {
+        return Err(invalid(format!(
+            "unknown field {k:?}: supported fields are {}",
+            FIELDS.join(", ")
+        )));
+    }
+    if patch.is_empty() {
+        return Err(invalid(format!(
+            "nothing to update: supported fields are {}",
+            FIELDS.join(", ")
+        )));
+    }
+    let rate = |key: &str| -> Result<Option<u32>, ApiError> {
+        match &patch[key] {
+            serde_json::Value::Null => Ok(None),
+            serde_json::Value::Number(n) => n
+                .as_u64()
+                .filter(|v| *v > 0)
+                .and_then(|v| u32::try_from(v).ok())
+                .map(Some)
+                .ok_or_else(|| invalid(format!("{key} must be between 1 and 4294967295 bytes/s"))),
+            serde_json::Value::String(s) => crate::units::parse_size(s)
+                .ok()
+                .filter(|v| *v > 0)
+                .and_then(|v| u32::try_from(v).ok())
+                .map(Some)
+                .ok_or_else(|| invalid(format!("{key}: {s:?} is not a size like \"2M\""))),
+            _ => Err(invalid(format!("{key} must be a number, a size or null"))),
+        }
     };
-    let ts = match v {
-        serde_json::Value::String(s) if s == "now" => None,
-        serde_json::Value::Number(n) => n.as_i64(),
-        _ => {
-            return Err(ApiError::new(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "invalid",
-                "last_used_at must be unix seconds or \"now\"",
+    let last_used = match patch.get("last_used_at") {
+        None => None,
+        Some(serde_json::Value::String(s)) if s == "now" => Some(None),
+        Some(serde_json::Value::Number(n)) if n.as_i64().is_some() => Some(n.as_i64()),
+        Some(_) => {
+            return Err(invalid(
+                "last_used_at must be unix seconds or \"now\"".to_owned(),
             ));
         }
     };
-    Ok(Json(e.set_last_used(&imdb_id, ts)?))
+    let limits_touched = ["download_limit", "upload_limit", "peer_limit"]
+        .iter()
+        .any(|k| patch.contains_key(*k));
+    let mut view = None;
+    if limits_touched {
+        let current = e
+            .get_movie(&imdb_id)?
+            .ok_or_else(|| ApiError::not_found("no such movie"))?;
+        let row = current
+            .torrent
+            .ok_or_else(|| ApiError::not_found("movie has no torrent"))?;
+        let download = if patch.contains_key("download_limit") {
+            rate("download_limit")?
+        } else {
+            row.download_limit
+        };
+        let upload = if patch.contains_key("upload_limit") {
+            rate("upload_limit")?
+        } else {
+            row.upload_limit
+        };
+        let peers = match patch.get("peer_limit") {
+            None => row.peer_limit,
+            Some(serde_json::Value::Null) => None,
+            Some(v) => Some(
+                v.as_u64()
+                    .filter(|p| (1..=10_000).contains(p))
+                    .ok_or_else(|| invalid("peer_limit must be 1..10000 or null".to_owned()))?
+                    as u32,
+            ),
+        };
+        view = Some(
+            e.set_movie_limits(&imdb_id, download, upload, peers)
+                .await?,
+        );
+    }
+    if let Some(ts) = last_used {
+        view = Some(e.set_last_used(&imdb_id, ts)?);
+    }
+    Ok(Json(view.expect("at least one field was set")))
 }
 
 async fn api_delete(

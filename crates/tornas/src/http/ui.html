@@ -104,6 +104,8 @@ aside{display:flex;flex-direction:column;gap:16px}
 .badge.s-downloading{color:var(--info);border-color:color-mix(in srgb,var(--info) 45%,var(--border))}
 .badge.s-done,.badge.s-seeding{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 45%,var(--border))}
 .badge.s-checking{color:var(--accent-2);border-color:color-mix(in srgb,var(--accent) 45%,var(--border))}
+.badge.s-queued{color:var(--muted);border-style:dashed}
+.badge.limit{color:var(--info)}
 .badge.s-paused{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 45%,var(--border))}
 .badge.s-error,.badge.s-missing{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,var(--border))}
 .badge.watch{color:var(--accent-2)}
@@ -239,6 +241,17 @@ dialog h3{margin:0 0 8px}
   </form>
 </dialog>
 
+<dialog id="limits-dlg">
+  <form method="dialog">
+    <h3 id="limits-title">Limits</h3>
+    <p class="small muted">Leave a box empty for no limit of its own. Sizes like <span class="mono">500K</span> or <span class="mono">2M</span> are per second. Applying reloads the torrent; downloaded pieces are kept.</p>
+    <div class="field"><label for="lim-down">Download</label><input type="text" id="lim-down" autocomplete="off" placeholder="unlimited"></div>
+    <div class="field"><label for="lim-up">Upload</label><input type="text" id="lim-up" autocomplete="off" placeholder="unlimited"></div>
+    <div class="field"><label for="lim-peers">Peers</label><input type="number" id="lim-peers" min="1" max="10000" placeholder="default"></div>
+    <div class="row"><div class="grow"></div><button class="btn ghost" value="cancel">Cancel</button><button class="btn primary" value="ok">Apply</button></div>
+  </form>
+</dialog>
+
 <dialog id="confirm-dlg">
   <form method="dialog">
     <h3 id="confirm-title"></h3>
@@ -351,7 +364,7 @@ function renderHero() {
   const dflt = p.default_duration_secs;
   if (chosen === null) chosen = dflt;
   const active = S.movies.filter((m) => !m.finished).length;
-  const key = JSON.stringify([p.paused, p.indefinite, p.until, chosen, dflt]);
+  const key = JSON.stringify([p.paused, p.indefinite, p.until, p.reason, chosen, dflt]);
   if (key === heroKey) {
     const a = $("hero-active"); if (a) a.textContent = activeText(active);
     return;
@@ -370,6 +383,12 @@ function renderHero() {
         }, label + (v === dflt ? " (default)" : "")))),
     );
     act.append(h("button", { class: "btn warn big", type: "button", id: "pause-btn", onclick: () => doPause(chosen) }, "Pause everything"));
+  } else if (p.reason === "disk_missing") {
+    hero.classList.add("paused");
+    body.append(
+      h("h1", {}, "Paused: the data disk is missing"),
+      h("p", { class: "muted" }, "Plug the disk back in. Everything resumes on its own once it is mounted again; until then nothing can be downloaded or streamed."),
+    );
   } else {
     hero.classList.add("paused");
     const indefinite = p.indefinite;
@@ -396,15 +415,17 @@ function renderHeader() {
   $("host").textContent = S.hostname + " · v" + S.version + " · up " + dur(S.session.uptime_secs);
   const pill = $("pill"), txt = $("pill-text");
   pill.className = "pill" + (S.pause.paused ? " paused" : "");
-  txt.textContent = S.pause.paused ? "Paused" : "Running";
+  txt.textContent = !S.pause.paused ? "Running" : S.pause.reason === "disk_missing" ? "Disk missing" : "Paused";
   document.title = (S.pause.paused ? "Paused · " : "") + "tornas";
 }
 function renderTiles() {
   const s = S.session, b = S.budget, ms = S.movies;
   $("t-down").textContent = rate(s.download_bps);
   $("t-up").textContent = rate(s.upload_bps);
-  $("t-down-s").textContent = ms.filter((m) => m.download_bps > 0).length + " active";
-  $("t-up-s").textContent = ms.some((m) => m.state === "seeding") ? "seeding" : "not seeding";
+  const cap = (v) => v ? " · limit " + rate(v) + (s.schedule_window != null ? " (schedule)" : "") : "";
+  $("t-down-s").textContent = ms.filter((m) => m.download_bps > 0).length + " active" +
+    (s.queued ? " · " + s.queued + " queued" : "") + cap(s.download_limit);
+  $("t-up-s").textContent = (ms.some((m) => m.state === "seeding") ? "seeding" : "not seeding") + cap(s.upload_limit);
   $("t-peers").textContent = s.peers_live;
   $("t-peers-s").textContent = s.torrents + " torrents loaded";
   $("t-movies").textContent = ms.length;
@@ -439,7 +460,8 @@ function buildCard(m) {
       h("div", { class: "badges" },
         r.state = h("span", { class: "badge" }),
         r.size = h("span", { class: "badge" }),
-        r.inuse = h("span", { class: "badge watch", title: "Streamed recently, so it will not be evicted" }, "in use")),
+        r.inuse = h("span", { class: "badge watch", title: "Streamed recently, so it will not be evicted" }, "in use"),
+        r.limit = h("span", { class: "badge limit", title: "This movie has its own speed or peer limits" }, "limited")),
       r.bar = h("div", { class: "bar", role: "progressbar", "aria-valuemin": 0, "aria-valuemax": 100, "aria-label": "Download progress" },
         r.fill = h("i")),
       r.meta = h("div", { class: "meta" }),
@@ -447,6 +469,7 @@ function buildCard(m) {
         r.play = h("a", { class: "btn primary sm" }, "Play"),
         r.web = h("a", { class: "btn sm", target: "_blank", rel: "noopener noreferrer" }, "Web"),
         r.file = h("a", { class: "btn sm ghost", title: "Direct video link for VLC or a browser" }, "File"),
+        r.limits = h("button", { class: "btn sm ghost", type: "button", onclick: () => editLimits(el._m) }, "Limits"),
         h("button", { class: "btn sm ghost danger", type: "button", onclick: () => removeMovie(el._m) }, "Remove"),
       ),
     ),
@@ -466,11 +489,15 @@ function updateCard(el, m) {
   r.state.textContent = m.state;
   r.size.textContent = bytes(m.total_bytes);
   r.inuse.hidden = !m.protected;
+  const t = m.torrent || {};
+  r.limit.hidden = t.download_limit == null && t.upload_limit == null && t.peer_limit == null;
+  r.limits.hidden = !m.torrent;
   r.bar.hidden = m.finished;
   r.bar.setAttribute("aria-valuenow", pct);
   r.fill.style.width = pct + "%";
   const meta = m.finished ? [bytes(m.total_bytes)]
     : m.state === "paused" ? [pct + "% verified", "paused"]
+    : m.state === "queued" ? [pct + "%", "waiting for a download slot"]
     : [pct + "%", rate(m.download_bps), plural(m.peers, "peer", "peers")];
   meta.push("watched " + ago(now() - m.last_used_at));
   r.meta.textContent = meta.join(" · ");
@@ -514,6 +541,24 @@ function renderAdd() {
   const paused = S.pause.paused;
   $("add-btn").disabled = paused;
   $("add-btn").textContent = paused ? "Paused: resume to add" : "Add to library";
+}
+
+function editLimits(m) {
+  const t = m.torrent || {}, dlg = $("limits-dlg");
+  $("limits-title").textContent = "Limits for " + m.title;
+  $("lim-down").value = t.download_limit ? t.download_limit : "";
+  $("lim-up").value = t.upload_limit ? t.upload_limit : "";
+  $("lim-peers").value = t.peer_limit ? t.peer_limit : "";
+  dlg.showModal();
+  dlg.addEventListener("close", async () => {
+    if (dlg.returnValue !== "ok") return;
+    const val = (id) => { const v = $(id).value.trim(); return v === "" ? null : /^\d+$/.test(v) ? Number(v) : v; };
+    try {
+      await api("PATCH", "/api/movies/" + encodeURIComponent(m.imdb_id),
+        { download_limit: val("lim-down"), upload_limit: val("lim-up"), peer_limit: val("lim-peers") });
+      toast("Limits updated for " + m.title); refresh();
+    } catch (e) { toast(e.message); }
+  }, { once: true });
 }
 
 async function removeMovie(m) {

@@ -93,6 +93,9 @@ pub struct Engine {
     pub tuning: crate::tuning::Tuning,
     pub blocklist: crate::tuning::IpListStatus,
     pub allowlist: crate::tuning::IpListStatus,
+    /// Compiled `[bandwidth]` windows and the index of the one in force.
+    bandwidth: Vec<crate::schedule::Window>,
+    bandwidth_active: parking_lot::Mutex<Option<usize>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +144,13 @@ pub struct BudgetView {
 pub struct SessionView {
     pub download_bps: u64,
     pub upload_bps: u64,
+    /// Global limits in force right now (after the bandwidth schedule); null = unlimited.
+    pub download_limit: Option<u32>,
+    pub upload_limit: Option<u32>,
+    /// Index into `[[bandwidth.schedule]]` of the window in force, if any.
+    pub schedule_window: Option<usize>,
+    /// Downloads held back by `--max-active-downloads`.
+    pub queued: usize,
     pub peers_live: u64,
     pub uptime_secs: u64,
     pub torrents: usize,
@@ -294,6 +304,7 @@ impl Engine {
             .context("starting torrent session")?;
 
         let pause0 = load_pause(data_dir);
+        let file_config_bandwidth = file_config.bandwidth.clone();
         let engine = Arc::new(Self {
             session,
             catalog,
@@ -314,7 +325,10 @@ impl Engine {
             tuning,
             blocklist,
             allowlist,
+            bandwidth: crate::schedule::compile(&file_config_bandwidth)?,
+            bandwidth_active: parking_lot::Mutex::new(None),
         });
+        engine.apply_bandwidth();
         *engine.weak.write() = Arc::downgrade(&engine);
         // The tracker list is fetched by the background refresh loop, whose first tick
         // fires immediately. Never block startup on it: a slow or offline source would
@@ -449,6 +463,15 @@ impl Engine {
             .await
             .with_context(|| format!("re-adding {}", row.imdb_id))?;
         if let AddTorrentResponse::Added(_, handle) = res {
+            // The saved piece map makes this a quick spot check; wait for it so
+            // callers see the settled state instead of a moment of "checking".
+            match tokio::time::timeout(Duration::from_secs(10), handle.wait_until_initialized())
+                .await
+            {
+                Ok(Err(e)) => warn!("{}: re-check after reload failed: {e:#}", row.imdb_id),
+                Err(_) => debug!("{}: still checking after reload", row.imdb_id),
+                Ok(Ok(())) => {}
+            }
             self.watch_completion_arc(handle);
         }
         Ok(())
@@ -462,6 +485,12 @@ impl Engine {
         upload: Option<u32>,
         peers: Option<u32>,
     ) -> anyhow::Result<MovieView> {
+        if self.is_disk_missing() {
+            return Err(fault(
+                FaultKind::Conflict,
+                "the data disk is missing; limits can be changed once it is back",
+            ));
+        }
         let _guard = self.add_lock.lock().await;
         let row = self
             .catalog
@@ -982,10 +1011,13 @@ impl Engine {
         let t = self
             .catalog
             .torrent_for_movie(imdb_id)?
-            .context("no such movie")?;
-        let h = self
-            .handle_for(&t.info_hash)
-            .context("torrent not loaded")?;
+            .ok_or_else(|| fault(FaultKind::NotFound, "no such movie"))?;
+        let h = self.handle_for(&t.info_hash).ok_or_else(|| {
+            fault(
+                FaultKind::Conflict,
+                "the torrent is not loaded (the data disk may be missing)",
+            )
+        })?;
         self.catalog.touch(imdb_id, now_secs())?;
         Ok((h, t.video_file_idx, t.video_file_name))
     }
@@ -1096,6 +1128,10 @@ impl Engine {
             session: SessionView {
                 download_bps: snap.download_speed.as_bytes(),
                 upload_bps: snap.upload_speed.as_bytes(),
+                download_limit: self.session.ratelimits.get_download_bps().map(|b| b.get()),
+                upload_limit: self.session.ratelimits.get_upload_bps().map(|b| b.get()),
+                schedule_window: *self.bandwidth_active.lock(),
+                queued: self.queued_count(),
                 peers_live: u64::from(snap.peers.live),
                 uptime_secs: self.started.elapsed().as_secs(),
                 torrents: self.session.with_torrents(|it| it.count()),
@@ -1138,6 +1174,10 @@ impl Engine {
             session: SessionView {
                 download_bps: snap.download_speed.as_bytes(),
                 upload_bps: snap.upload_speed.as_bytes(),
+                download_limit: self.session.ratelimits.get_download_bps().map(|b| b.get()),
+                upload_limit: self.session.ratelimits.get_upload_bps().map(|b| b.get()),
+                schedule_window: *self.bandwidth_active.lock(),
+                queued: self.queued_count(),
                 peers_live: u64::from(snap.peers.live),
                 uptime_secs: self.started.elapsed().as_secs(),
                 torrents: self.session.with_torrents(|it| it.count()),
@@ -1383,6 +1423,65 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// Set the global limits from the bandwidth schedule for the current local time.
+    pub fn apply_bandwidth(&self) {
+        let (day, minute) = crate::schedule::now_local();
+        self.apply_bandwidth_at(day, minute);
+    }
+
+    fn apply_bandwidth_at(&self, day: u8, minute: u16) {
+        use crate::schedule::{Limit, active, resolve};
+        let idx = active(&self.bandwidth, day, minute);
+        let (dl, ul) = idx
+            .map(|i| (self.bandwidth[i].download, self.bandwidth[i].upload))
+            .unwrap_or((Limit::Inherit, Limit::Inherit));
+        let dl = resolve(dl, self.opts.ratelimit_download.and_then(NonZeroU32::new));
+        let ul = resolve(ul, self.opts.ratelimit_upload.and_then(NonZeroU32::new));
+        let r = &self.session.ratelimits;
+        let changed = r.get_download_bps() != dl || r.get_upload_bps() != ul;
+        if changed {
+            r.set_download_bps(dl);
+            r.set_upload_bps(ul);
+        }
+        let prev = std::mem::replace(&mut *self.bandwidth_active.lock(), idx);
+        if prev != idx || changed {
+            let show = |b: Option<NonZeroU32>| {
+                b.map(|b| crate::units::human_rate(u64::from(b.get())))
+                    .unwrap_or_else(|| "unlimited".into())
+            };
+            let which = idx
+                .map(|i| format!("schedule window {i}"))
+                .unwrap_or_else(|| "global limits".into());
+            info!(
+                "bandwidth: {which}: download {}, upload {}",
+                show(dl),
+                show(ul)
+            );
+        }
+    }
+
+    pub async fn bandwidth_forever(self: Arc<Self>) {
+        if self.bandwidth.is_empty() {
+            return;
+        }
+        let mut tick = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            tick.tick().await;
+            self.apply_bandwidth();
+        }
+    }
+
+    /// Unfinished torrents held paused by the download queue.
+    pub fn queued_count(&self) -> usize {
+        if self.opts.max_active_downloads.is_none() || self.is_paused() {
+            return 0;
+        }
+        self.session.with_torrents(|it| {
+            it.filter(|(_, h)| h.is_paused() && !h.stats().finished)
+                .count()
+        })
     }
 
     pub async fn pause_watch_forever(self: Arc<Self>) {

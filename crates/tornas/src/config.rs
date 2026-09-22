@@ -16,6 +16,7 @@ use crate::trackers::TrackersConfig;
 pub struct FileConfig {
     pub trackers: TrackersConfig,
     pub network: NetworkConfig,
+    pub bandwidth: crate::schedule::BandwidthConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

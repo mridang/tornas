@@ -79,6 +79,23 @@ pub struct IpListStatus {
     pub note: Option<String>,
 }
 
+/// A list URL as safe to log and show: no user:password and no query string,
+/// which is where list providers put account keys.
+pub fn redact_url(spec: &str) -> String {
+    let Some((scheme, rest)) = spec.split_once("://") else {
+        return spec.to_owned();
+    };
+    let (rest, query) = match rest.split_once('?') {
+        Some((r, _)) => (r, "?…"),
+        None => (rest, ""),
+    };
+    let rest = match rest.split_once('/') {
+        Some((auth, path)) => format!("{}/{path}", auth.rsplit('@').next().unwrap_or(auth)),
+        None => rest.rsplit('@').next().unwrap_or(rest).to_owned(),
+    };
+    format!("{scheme}://{rest}{query}")
+}
+
 fn file_url(path: &Path) -> anyhow::Result<String> {
     let abs = std::fs::canonicalize(path).with_context(|| format!("{path:?} not found"))?;
     Ok(format!("file://{}", abs.display()))
@@ -97,15 +114,16 @@ pub async fn prepare_ip_list(
     let Some(spec) = spec.map(str::trim).filter(|s| !s.is_empty()) else {
         return Ok(IpListStatus::default());
     };
+    let shown = redact_url(spec);
     let mut st = IpListStatus {
-        source: Some(spec.to_owned()),
+        source: Some(shown.clone()),
         ..Default::default()
     };
     let give_up = |st: &mut IpListStatus, why: String| -> anyhow::Result<()> {
         if fail_closed {
-            bail!("peer {kind} {spec}: {why}; refusing to start without it");
+            bail!("peer {kind} {shown}: {why}; refusing to start without it");
         }
-        warn!("peer {kind} {spec}: {why}; running without it");
+        warn!("peer {kind} {shown}: {why}; running without it");
         st.note = Some(format!("{why}; running without the {kind}"));
         Ok(())
     };
@@ -116,13 +134,13 @@ pub async fn prepare_ip_list(
                 std::fs::write(&tmp, &bytes)?;
                 std::fs::rename(&tmp, cache)?;
                 info!(
-                    "peer {kind}: downloaded {} from {spec}",
+                    "peer {kind}: downloaded {} from {shown}",
                     crate::units::human_bytes(bytes.len() as u64)
                 );
                 st.loaded_from = Some(file_url(cache)?);
             }
             Err(e) if cache.is_file() => {
-                warn!("peer {kind}: could not download {spec} ({e:#}); using the cached copy");
+                warn!("peer {kind}: could not download {shown} ({e:#}); using the cached copy");
                 st.note = Some(format!("using a cached copy: {e:#}"));
                 st.loaded_from = Some(file_url(cache)?);
             }
@@ -232,5 +250,15 @@ mod tests {
                 .source
                 .is_none()
         );
+    }
+
+    #[test]
+    fn list_urls_are_redacted() {
+        assert_eq!(
+            redact_url("https://u:p@list.example/bt.gz?id=secret&pin=1"),
+            "https://list.example/bt.gz?…"
+        );
+        assert_eq!(redact_url("https://list.example"), "https://list.example");
+        assert_eq!(redact_url("/etc/tornas/allow.txt"), "/etc/tornas/allow.txt");
     }
 }

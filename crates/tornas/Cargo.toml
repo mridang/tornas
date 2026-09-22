@@ -49,6 +49,7 @@ metrics-exporter-prometheus = { version = "0.18", default-features = false }
 url = "2"
 ipnet = "2"
 serde_ignored = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 toml = "0.9"
 base64 = "0.22"
 humantime-serde = "1"

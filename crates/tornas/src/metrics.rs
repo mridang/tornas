@@ -300,6 +300,65 @@ pub fn render(engine: &Engine) -> anyhow::Result<String> {
         "1 while everything is paused",
         u8::from(status.pause.paused),
     );
+    gauge(
+        &mut out,
+        "tornas_paused_for_missing_disk",
+        "1 while everything is paused because the data disk is missing",
+        u8::from(status.pause.reason == Some(crate::engine::PauseReason::DiskMissing)),
+    );
+    gauge(
+        &mut out,
+        "tornas_data_disk_mounted",
+        "0 while the data disk is missing (only watched with --require-mount)",
+        u8::from(!engine.is_disk_missing()),
+    );
+    gauge(
+        &mut out,
+        "tornas_queued_downloads",
+        "Downloads held back by --max-active-downloads",
+        status.session.queued,
+    );
+    if let Some(max) = engine.opts.max_active_downloads {
+        gauge(
+            &mut out,
+            "tornas_max_active_downloads",
+            "Configured download queue size",
+            max,
+        );
+    }
+    // ---- limits in force (0 = unlimited)
+    gauge(
+        &mut out,
+        "tornas_ratelimit_download_bytes_per_second",
+        "Global download limit in force after the bandwidth schedule; 0 = unlimited",
+        status.session.download_limit.unwrap_or(0),
+    );
+    gauge(
+        &mut out,
+        "tornas_ratelimit_upload_bytes_per_second",
+        "Global upload limit in force after the bandwidth schedule; 0 = unlimited",
+        status.session.upload_limit.unwrap_or(0),
+    );
+    if let Some(w) = status.session.schedule_window {
+        gauge(
+            &mut out,
+            "tornas_bandwidth_window",
+            "Index of the [[bandwidth.schedule]] window in force",
+            w,
+        );
+    }
+    gauge(
+        &mut out,
+        "tornas_peer_limit",
+        "Default peers per torrent",
+        engine.tuning.peer_limit,
+    );
+    gauge(
+        &mut out,
+        "tornas_concurrent_checks",
+        "Torrents allowed to hash-check at once",
+        engine.tuning.concurrent_checks,
+    );
     if let Some(r) = status.pause.remaining_secs {
         gauge(
             &mut out,

@@ -109,6 +109,11 @@ pub fn validate_file_config(fc: &FileConfig) -> Report {
     if t.static_lists.block.iter().any(|b| b.trim().is_empty()) {
         r.err("trackers.static.block contains an empty entry");
     }
+    for (i, w) in fc.bandwidth.schedule.iter().enumerate() {
+        if let Err(e) = crate::schedule::Window::parse(w) {
+            r.err(format!("bandwidth.schedule[{i}]: {e:#}"));
+        }
+    }
     if fc.network.allow_from.is_empty() {
         r.err("network.allow_from is empty, so nothing could reach the server; use [\"0.0.0.0/0\", \"::/0\"] to allow every address");
     }
@@ -545,6 +550,16 @@ mod tests {
         assert!(r.warnings.iter().any(|w| w.contains("WebTorrent")));
         let r = check_toml_text("[trackers]\nrefresh = \"soon\"\n");
         assert!(!r.errors.is_empty());
+        let r = check_toml_text("[[bandwidth.schedule]]\nfrom = \"18:00\"\nto = \"18:00\"\n");
+        assert!(
+            r.errors.iter().any(|e| e.contains("bandwidth.schedule[0]")),
+            "{:?}",
+            r.errors
+        );
+        let r = check_toml_text(
+            "[[bandwidth.schedule]]\ndays = [\"fri\"]\nfrom = \"22:00\"\nto = \"06:00\"\ndownload = \"2M\"\n",
+        );
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
         let r = check_toml_text("not = [valid");
         assert!(r.errors[0].contains("not valid TOML"));
         let r =

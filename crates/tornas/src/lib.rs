@@ -30,6 +30,7 @@ pub mod logging;
 pub mod mdns;
 pub mod metrics;
 pub mod netacl;
+pub mod schedule;
 pub mod tmdb;
 pub mod trackers;
 pub mod tui;
@@ -149,6 +150,7 @@ pub async fn run_server(
     tokio::spawn(watchdog::run(engine.clone()));
     tokio::spawn(status_loop(engine.clone()));
     tokio::spawn(engine.clone().pause_watch_forever());
+    tokio::spawn(engine.clone().bandwidth_forever());
     if let Some(iv) = opts.auto_update {
         tokio::spawn(update::auto_update_forever(
             engine.clone(),
