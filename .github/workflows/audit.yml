@@ -39,5 +39,8 @@ jobs:
       # the rustsec/audit-check action discovers automatically.
       - name: Run cargo-audit
         uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998  # v2.0.0
+        # rust-toolchain.toml pins the project's compiler; the audit tool builds with stable.
+        env:
+          RUSTUP_TOOLCHAIN: stable
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
