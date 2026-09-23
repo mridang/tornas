@@ -150,28 +150,29 @@ Pushing to `master` runs semantic-release, which needs these repository secrets:
 | Secret | Used for |
 |---|---|
 | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` | pushing the multi-arch image |
-| `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE` | signing the apt repository (see below) |
+| `GPG_PRIVATE_KEY` | signing the apt repository (see below) |
+| `GPG_PASSPHRASE` | only if that key is passphrase-protected; the key below is not |
 
 GitHub Pages must serve the `gh-pages` branch for the apt repository. No cargo registry token is needed: nothing is published to crates.io, and the version is bumped by `scripts/set-version.sh`.
 
 ## apt repository signing key
 
 The release workflow signs the apt repository on `gh-pages` with a GPG key held
-in two repository secrets. Create it once:
+in a repository secret. Create it once:
 
 ```sh
-cat > /tmp/keyspec <<'SPEC'
-%no-protection
-Key-Type: eddsa
-Key-Curve: ed25519
-Name-Real: tornas apt
-Name-Email: mridang.agarwalla@gmail.com
-Expire-Date: 0
-SPEC
-gpg --batch --gen-key /tmp/keyspec
+gpg --batch --pinentry-mode loopback --passphrase "" \
+  --quick-gen-key "tornas apt <mridang.agarwalla@gmail.com>" ed25519 sign never
 gpg --armor --export-secret-keys "tornas apt" | gh secret set GPG_PRIVATE_KEY
-gh secret set GPG_PASSPHRASE --body ""
 ```
+
+The key is created without a passphrase, since CI has nowhere to type one, so leave
+`GPG_PASSPHRASE` unset. Do not try `gh secret set GPG_PASSPHRASE --body ""`: gh reads
+an empty `--body` as no value and prompts for one instead.
+
+Back the key up somewhere safe (`gpg --armor --export-secret-keys "tornas apt"`).
+Losing it means signing future releases with a new key, and everyone who already
+installed has to fetch the new public key before `apt update` works again.
 
 Then enable GitHub Pages for the repository with the `gh-pages` branch as its
 source. Users install the public key from `https://mridang.github.io/tornas/tornas.gpg`.

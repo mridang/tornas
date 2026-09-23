@@ -8,7 +8,8 @@
     "zig@0.13.0",
     "cmake@latest",
     "pkg-config@latest",
-    "ffmpeg-headless@latest"
+    "ffmpeg-headless@latest",
+    "gnupg@2.4.9"
   ],
   "env": {
     "CARGO_HOME": "$DEVBOX_PROJECT_ROOT/.cargo",
