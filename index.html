@@ -1,0 +1,6 @@
+<!doctype html><title>tornas apt repository</title>
+<h1>tornas apt repository</h1>
+<pre>curl -fsSL https://mridang.github.io/tornas/tornas.gpg | sudo tee /usr/share/keyrings/tornas.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/tornas.gpg] https://mridang.github.io/tornas stable main" | sudo tee /etc/apt/sources.list.d/tornas.list
+sudo apt update &amp;&amp; sudo apt install tornas</pre>
+<p><a href="pool/main/t/tornas/">packages</a> · <a href="https://github.com/mridang/tornas">source</a></p>

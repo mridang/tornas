@@ -1,0 +1,21 @@
+Package: tornas
+Version: 1.0.0-1
+Architecture: amd64
+Maintainer: Mridang Agarwalla <mridang.agarwalla@gmail.com>
+Installed-Size: 10816
+Depends: ca-certificates
+Recommends: systemd
+Filename: pool/main/t/tornas/tornas_1.0.0-1_amd64.deb
+Size: 3850496
+MD5sum: 1c69ca9229b78cfc90a9907cc92b9a38
+SHA1: bfb8001da7be921b8ca57c32c2b492481793c13a
+SHA256: 7ed6298e1863913fc8ecfd4dfa793f22ca916f1edfe080b46891669636d69644
+Section: video
+Priority: optional
+Homepage: https://github.com/mridang/tornas
+Description: Single-binary home media center: torrent client, Stremio addon, DLNA server,
+ LRU disk budget
+ Single static binary that downloads movies over BitTorrent, serves them to
+ Stremio and DLNA players, fetches TMDB metadata, and evicts the least recently
+ watched titles to stay under a configured disk budget.
+
