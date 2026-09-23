@@ -80,15 +80,15 @@ jobs:
       - name: Import apt signing key
         if: steps.debs.outputs.found == 'true'
         env:
-          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
         run: |
-          echo "$APT_GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
           gpg --batch --list-secret-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}' > /tmp/keyid
 
       - name: Build apt repository
         if: steps.debs.outputs.found == 'true'
         env:
-          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: scripts/build-apt-repo.sh dist site "$(cat /tmp/keyid)"
 
       - name: Publish to gh-pages

@@ -27,7 +27,7 @@ apt-ftparchive \
   -o "APT::FTPArchive::Release::Components=$COMPONENT" \
   -o "APT::FTPArchive::Release::Architectures=amd64 arm64 armhf" \
   release "dists/$SUITE" > "dists/$SUITE/Release"
-PASS=${APT_GPG_PASSPHRASE:-}
+PASS=${GPG_PASSPHRASE:-}
 gpg --batch --yes --pinentry-mode loopback --passphrase "$PASS" -u "$KEYID" --clearsign -o "dists/$SUITE/InRelease" "dists/$SUITE/Release"
 gpg --batch --yes --pinentry-mode loopback --passphrase "$PASS" -u "$KEYID" -abs -o "dists/$SUITE/Release.gpg" "dists/$SUITE/Release"
 gpg --batch --export "$KEYID" > tornas.gpg

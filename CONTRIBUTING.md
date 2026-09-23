@@ -150,7 +150,7 @@ Pushing to `master` runs semantic-release, which needs these repository secrets:
 | Secret | Used for |
 |---|---|
 | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` | pushing the multi-arch image |
-| `APT_GPG_PRIVATE_KEY`, `APT_GPG_PASSPHRASE` | signing the apt repository (see below) |
+| `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE` | signing the apt repository (see below) |
 
 GitHub Pages must serve the `gh-pages` branch for the apt repository. No cargo registry token is needed: nothing is published to crates.io, and the version is bumped by `scripts/set-version.sh`.
 
@@ -169,8 +169,8 @@ Name-Email: mridang.agarwalla@gmail.com
 Expire-Date: 0
 SPEC
 gpg --batch --gen-key /tmp/keyspec
-gpg --armor --export-secret-keys "tornas apt" | gh secret set APT_GPG_PRIVATE_KEY
-gh secret set APT_GPG_PASSPHRASE --body ""
+gpg --armor --export-secret-keys "tornas apt" | gh secret set GPG_PRIVATE_KEY
+gh secret set GPG_PASSPHRASE --body ""
 ```
 
 Then enable GitHub Pages for the repository with the `gh-pages` branch as its
