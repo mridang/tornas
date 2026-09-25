@@ -30,6 +30,7 @@ pub mod logging;
 pub mod mdns;
 pub mod metrics;
 pub mod schedule;
+pub mod stremio;
 pub mod systemd;
 pub mod tmdb;
 pub mod trackers;
