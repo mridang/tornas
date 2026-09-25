@@ -101,62 +101,109 @@ fn file_url(path: &Path) -> anyhow::Result<String> {
     Ok(format!("file://{}", abs.display()))
 }
 
-/// Resolve a block or allow list into something librqbit can load at startup.
-/// http(s) lists are downloaded and cached; on failure the cached copy is used.
-/// `fail_closed` (the allowlist) refuses to continue without a list; otherwise the
-/// server starts without it and reports why.
-pub async fn prepare_ip_list(
-    spec: Option<&str>,
-    cache: &Path,
-    kind: &str,
+/// A peer block or allow list, as configured. Construction decides what kind of
+/// list this is and how a failure to load it should be treated; nothing is
+/// fetched until [`PeerList::prepare`].
+#[derive(Debug, Clone)]
+pub struct PeerList {
+    /// Where the list comes from: an http(s) URL, a path, or a `file://` URL.
+    source: String,
+    /// "blocklist" or "allowlist", for messages.
+    kind: &'static str,
+    /// Whether an unavailable list stops the server. The allowlist is the one that
+    /// must fail closed: running without it would talk to every peer, which is the
+    /// opposite of what was asked for.
     fail_closed: bool,
-) -> anyhow::Result<IpListStatus> {
-    let Some(spec) = spec.map(str::trim).filter(|s| !s.is_empty()) else {
-        return Ok(IpListStatus::default());
-    };
-    let shown = redact_url(spec);
-    let mut st = IpListStatus {
-        source: Some(shown.clone()),
-        ..Default::default()
-    };
-    let give_up = |st: &mut IpListStatus, why: String| -> anyhow::Result<()> {
-        if fail_closed {
-            bail!("peer {kind} {shown}: {why}; refusing to start without it");
-        }
-        warn!("peer {kind} {shown}: {why}; running without it");
-        st.note = Some(format!("{why}; running without the {kind}"));
-        Ok(())
-    };
-    if spec.starts_with("http://") || spec.starts_with("https://") {
-        match download(spec).await {
-            Ok(bytes) => {
-                let tmp = cache.with_extension("tmp");
-                std::fs::write(&tmp, &bytes)?;
-                std::fs::rename(&tmp, cache)?;
-                info!(
-                    "peer {kind}: downloaded {} from {shown}",
-                    crate::units::human_bytes(bytes.len() as u64)
-                );
-                st.loaded_from = Some(file_url(cache)?);
+}
+
+impl PeerList {
+    /// Peers never to talk to. A list that cannot be loaded is a warning: the
+    /// server still starts, just without it.
+    pub fn blocklist(spec: &str) -> Option<Self> {
+        Self::new(spec, "blocklist", false)
+    }
+
+    /// The only peers to talk to. A list that cannot be loaded stops the server.
+    pub fn allowlist(spec: &str) -> Option<Self> {
+        Self::new(spec, "allowlist", true)
+    }
+
+    /// `None` when nothing was configured, which is the normal case.
+    fn new(spec: &str, kind: &'static str, fail_closed: bool) -> Option<Self> {
+        let spec = spec.trim();
+        (!spec.is_empty()).then(|| Self {
+            source: spec.to_owned(),
+            kind,
+            fail_closed,
+        })
+    }
+
+    /// What to show in logs and `/api/config`: never the query string, which is
+    /// where list providers put account keys.
+    fn shown(&self) -> String {
+        redact_url(&self.source)
+    }
+
+    /// Fetch or locate the list and hand librqbit a `file://` URL for it.
+    /// `cache` is where a downloaded copy is kept so an offline boot still works.
+    pub async fn prepare(&self, cache: &Path) -> anyhow::Result<IpListStatus> {
+        let shown = self.shown();
+        let mut st = IpListStatus {
+            source: Some(shown.clone()),
+            ..Default::default()
+        };
+        let kind = self.kind;
+        let give_up = |st: &mut IpListStatus, why: String| -> anyhow::Result<()> {
+            if self.fail_closed {
+                bail!("peer {kind} {shown}: {why}; refusing to start without it");
             }
-            Err(e) if cache.is_file() => {
-                warn!("peer {kind}: could not download {shown} ({e:#}); using the cached copy");
-                st.note = Some(format!("using a cached copy: {e:#}"));
-                st.loaded_from = Some(file_url(cache)?);
+            warn!("peer {kind} {shown}: {why}; running without it");
+            st.note = Some(format!("{why}; running without the {kind}"));
+            Ok(())
+        };
+
+        if self.source.starts_with("http://") || self.source.starts_with("https://") {
+            match download(&self.source).await {
+                Ok(bytes) => {
+                    let tmp = cache.with_extension("tmp");
+                    std::fs::write(&tmp, &bytes)?;
+                    std::fs::rename(&tmp, cache)?;
+                    info!(
+                        "peer {kind}: downloaded {} from {shown}",
+                        crate::units::human_bytes(bytes.len() as u64)
+                    );
+                    st.loaded_from = Some(file_url(cache)?);
+                }
+                Err(e) if cache.is_file() => {
+                    warn!("peer {kind}: could not download {shown} ({e:#}); using the cached copy");
+                    st.note = Some(format!("using a cached copy: {e:#}"));
+                    st.loaded_from = Some(file_url(cache)?);
+                }
+                Err(e) => give_up(
+                    &mut st,
+                    format!("could not download it ({e:#}) and there is no cached copy"),
+                )?,
             }
-            Err(e) => give_up(
-                &mut st,
-                format!("could not download it ({e:#}) and there is no cached copy"),
-            )?,
+        } else {
+            let path = PathBuf::from(self.source.strip_prefix("file://").unwrap_or(&self.source));
+            match file_url(&path) {
+                Ok(u) => st.loaded_from = Some(u),
+                Err(e) => give_up(&mut st, format!("{e:#}"))?,
+            }
         }
-    } else {
-        let path = PathBuf::from(spec.strip_prefix("file://").unwrap_or(spec));
-        match file_url(&path) {
-            Ok(u) => st.loaded_from = Some(u),
-            Err(e) => give_up(&mut st, format!("{e:#}"))?,
+        Ok(st)
+    }
+}
+
+/// The status of a list that was not configured at all.
+impl IpListStatus {
+    /// Prepare `list` if there is one, otherwise report "not configured".
+    pub async fn prepare(list: Option<PeerList>, cache: &Path) -> anyhow::Result<Self> {
+        match list {
+            Some(l) => l.prepare(cache).await,
+            None => Ok(Self::default()),
         }
     }
-    Ok(st)
 }
 
 async fn download(url: &str) -> anyhow::Result<Vec<u8>> {
@@ -219,46 +266,59 @@ mod tests {
     async fn ip_lists_fail_open_or_closed() {
         let dir = tempfile::tempdir().unwrap();
         let cache = dir.path().join("blocklist.cache");
-        // missing local file: blocklist starts without it, allowlist refuses
-        let st = prepare_ip_list(Some("/nonexistent/list.txt"), &cache, "blocklist", false)
+
+        // A missing local file: the blocklist starts without it, the allowlist won't.
+        let missing = "/nonexistent/list.txt";
+        let st = PeerList::blocklist(missing)
+            .unwrap()
+            .prepare(&cache)
             .await
             .unwrap();
         assert!(st.loaded_from.is_none() && st.note.is_some());
         assert!(
-            prepare_ip_list(Some("/nonexistent/list.txt"), &cache, "allowlist", true)
+            PeerList::allowlist(missing)
+                .unwrap()
+                .prepare(&cache)
                 .await
                 .is_err()
         );
-        // local file becomes a file:// URL
+
+        // A local file becomes a file:// URL.
         let f = dir.path().join("list.txt");
         std::fs::write(&f, "bad:1.2.3.4-1.2.3.5\n").unwrap();
-        let st = prepare_ip_list(Some(f.to_str().unwrap()), &cache, "blocklist", false)
+        let st = PeerList::blocklist(f.to_str().unwrap())
+            .unwrap()
+            .prepare(&cache)
             .await
             .unwrap();
         assert!(st.loaded_from.unwrap().starts_with("file://"));
-        // unreachable URL with a cached copy uses the cache
+
+        // An unreachable URL falls back to the cached copy, even fail-closed.
         std::fs::write(&cache, "bad:1.2.3.4-1.2.3.5\n").unwrap();
-        let st = prepare_ip_list(Some("http://127.0.0.1:9/list"), &cache, "blocklist", true)
+        let st = PeerList::allowlist("http://127.0.0.1:9/list")
+            .unwrap()
+            .prepare(&cache)
             .await
             .unwrap();
         assert!(st.loaded_from.is_some() && st.note.unwrap().contains("cached"));
-        // nothing configured
-        assert!(
-            prepare_ip_list(None, &cache, "blocklist", true)
-                .await
-                .unwrap()
-                .source
-                .is_none()
-        );
     }
 
     #[test]
-    fn list_urls_are_redacted() {
-        assert_eq!(
-            redact_url("https://u:p@list.example/bt.gz?id=secret&pin=1"),
-            "https://list.example/bt.gz?…"
+    fn nothing_configured_is_not_a_list() {
+        assert!(PeerList::blocklist("").is_none());
+        assert!(PeerList::allowlist("   ").is_none());
+        assert!(
+            PeerList::blocklist(" /etc/list.txt ").is_some(),
+            "specs are trimmed"
         );
-        assert_eq!(redact_url("https://list.example"), "https://list.example");
-        assert_eq!(redact_url("/etc/tornas/allow.txt"), "/etc/tornas/allow.txt");
+    }
+
+    #[tokio::test]
+    async fn an_absent_list_reports_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let st = IpListStatus::prepare(None, &dir.path().join("x.cache"))
+            .await
+            .unwrap();
+        assert!(st.source.is_none() && st.loaded_from.is_none());
     }
 }

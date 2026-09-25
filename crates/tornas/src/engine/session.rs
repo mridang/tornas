@@ -23,6 +23,7 @@ use crate::{
     config::ServerOpts,
     tmdb::Tmdb,
     trackers::TrackerFeed,
+    tuning::{IpListStatus, PeerList},
 };
 
 use super::*;
@@ -81,18 +82,14 @@ impl Engine {
             (std::net::Ipv4Addr::UNSPECIFIED, listen_port).into()
         };
         let tuning = crate::tuning::from_opts(&opts);
-        let blocklist = crate::tuning::prepare_ip_list(
-            opts.peer_blocklist.as_deref(),
+        let blocklist = IpListStatus::prepare(
+            opts.peer_blocklist.as_deref().and_then(PeerList::blocklist),
             &data_dir.join("peer-blocklist.cache"),
-            "blocklist",
-            false,
         )
         .await?;
-        let allowlist = crate::tuning::prepare_ip_list(
-            opts.peer_allowlist.as_deref(),
+        let allowlist = IpListStatus::prepare(
+            opts.peer_allowlist.as_deref().and_then(PeerList::allowlist),
             &data_dir.join("peer-allowlist.cache"),
-            "allowlist",
-            true,
         )
         .await?;
         // A router port mapping points at the LAN address, which is not where traffic
