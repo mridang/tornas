@@ -198,7 +198,7 @@ impl Engine {
         let file_config = opts.resolve_file_config()?;
         // Same rules as `tornas config check`, so a bad file fails loudly here
         // instead of misbehaving later.
-        let report = crate::configcheck::validate_file_config(&file_config);
+        let report = crate::config::check::validate_file_config(&file_config);
         for w in &report.warnings {
             warn!("config: {w}");
         }

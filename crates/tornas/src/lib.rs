@@ -19,7 +19,6 @@ macro_rules! outln {
 pub mod budget;
 pub mod catalog;
 pub mod config;
-pub mod configcheck;
 pub mod dlna;
 pub mod doctor;
 pub mod engine;
