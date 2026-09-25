@@ -16,6 +16,7 @@ macro_rules! outln {
     }};
 }
 
+pub mod adapters;
 pub mod budget;
 pub mod catalog;
 pub mod cli;
@@ -114,9 +115,7 @@ pub async fn run_server(
             friendly_name: name,
             http_listen_port: opts.http_listen.port(),
             http_prefix: "/upnp".to_owned(),
-            browse_provider: Box::new(dlna::CatalogBrowser {
-                engine: engine.clone(),
-            }),
+            browse_provider: Box::new(dlna::Directory::new(engine.catalog.clone())),
             cancellation_token: cancel.child_token(),
         })
         .await
@@ -134,7 +133,16 @@ pub async fn run_server(
     let _mdns = if opts.disable_mdns || opts.http_listen.ip().is_loopback() {
         None
     } else {
-        match mdns::advertise(&opts.mdns_name, opts.http_listen) {
+        match mdns::advertise(
+            "_http._tcp.local.",
+            &opts.mdns_name,
+            opts.http_listen,
+            &[
+                ("path", "/"),
+                ("manifest", "/manifest.json"),
+                ("api", "/api"),
+            ],
+        ) {
             Ok(m) => Some(m),
             Err(e) => {
                 warn!("mDNS advertisement failed, continuing without it: {e:#}");

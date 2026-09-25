@@ -64,7 +64,7 @@ impl Engine {
         }
         let trackers = TrackerFeed::new(file_config.trackers.clone(), data_dir);
         let ipv6 = file_config.network.ipv6;
-        let catalog = Catalog::open(&data_dir.join("catalog.db"))?;
+        let catalog = Arc::new(Catalog::open(&data_dir.join("catalog.db"))?);
         let tmdb = Tmdb::new(
             &opts.tmdb_base_url,
             opts.tmdb_token.clone(),

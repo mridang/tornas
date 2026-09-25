@@ -1,5 +1,9 @@
-//! mDNS / DNS-SD advertisement so the box answers as `<name>.local` and shows up
-//! as an HTTP service in LAN browsers. Borrowed from rqbit's own implementation.
+//! mDNS / DNS-SD advertisement: announce any service on the local network so the
+//! box answers as `<name>.local` and shows up in LAN browsers. Borrowed from
+//! rqbit's own implementation.
+//!
+//! Knows nothing about what is being advertised — the service type and TXT records
+//! are arguments.
 
 use std::net::SocketAddr;
 
@@ -21,8 +25,16 @@ impl Drop for MdnsAdvertisement {
 }
 
 /// `name` becomes both the DNS-SD instance and the `<name>.local` hostname.
-pub fn advertise(name: &str, listen_addr: SocketAddr) -> anyhow::Result<MdnsAdvertisement> {
-    const SERVICE_TYPE: &str = "_http._tcp.local.";
+/// Advertise a service on the local network until the returned handle is dropped.
+///
+/// `service_type` is a DNS-SD type such as `_http._tcp.local.`; `properties` become
+/// the TXT record. Nothing here is specific to any one application.
+pub fn advertise(
+    service_type: &str,
+    name: &str,
+    listen_addr: SocketAddr,
+    properties: &[(&str, &str)],
+) -> anyhow::Result<MdnsAdvertisement> {
     let name: String = name
         .chars()
         .map(|c| {
@@ -49,18 +61,13 @@ pub fn advertise(name: &str, listen_addr: SocketAddr) -> anyhow::Result<MdnsAdve
     } else {
         ip.to_string()
     };
-    let properties = [
-        ("path", "/"),
-        ("manifest", "/manifest.json"),
-        ("api", "/api"),
-    ];
     let mut info = ServiceInfo::new(
-        SERVICE_TYPE,
+        service_type,
         &name,
         &hostname,
         addr.as_str(),
         listen_addr.port(),
-        &properties[..],
+        properties,
     )
     .context("building mDNS service info")?;
     if addr_auto {

@@ -36,7 +36,9 @@ use crate::{
 
 pub struct Engine {
     pub session: Arc<Session>,
-    pub catalog: Catalog,
+    /// Shared so other subsystems (DLNA, for one) can read the library without
+    /// holding the whole engine.
+    pub catalog: Arc<Catalog>,
     pub tmdb: Option<Tmdb>,
     pub opts: ServerOpts,
     pub file_config: FileConfig,
