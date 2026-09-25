@@ -29,12 +29,12 @@ pub mod logging;
 pub mod mdns;
 pub mod metrics;
 pub mod schedule;
+pub mod systemd;
 pub mod tmdb;
 pub mod trackers;
 pub mod tuning;
 pub mod units;
 pub mod update;
-pub mod watchdog;
 
 use std::net::SocketAddr;
 use std::sync::{
@@ -88,7 +88,7 @@ async fn status_loop(engine: Arc<Engine>) {
                 units::human_rate(st.session.upload_bps),
                 st.session.peers_live
             );
-            watchdog::status(&line);
+            systemd::status(&line);
         }
     }
 }
@@ -144,7 +144,10 @@ pub async fn run_server(
     };
 
     tokio::spawn(engine.clone().sweep_forever());
-    tokio::spawn(watchdog::run(engine.clone()));
+    tokio::spawn({
+        let e = engine.clone();
+        systemd::watch(move || e.probe())
+    });
     tokio::spawn(status_loop(engine.clone()));
     tokio::spawn(engine.clone().pause_watch_forever());
     tokio::spawn(engine.clone().bandwidth_forever());
@@ -174,7 +177,7 @@ pub async fn run_server(
         // Tell systemd we are up once the listener is bound (both branches bind immediately).
         tokio::spawn(async {
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            watchdog::ready();
+            systemd::ready();
         });
         match (&opts.tls_cert, &opts.tls_key) {
             (Some(cert), Some(key)) => {
@@ -208,7 +211,7 @@ pub async fn run_server(
         None => serve.await?,
     }
     info!("shutting down");
-    watchdog::stopping();
+    systemd::stopping();
     engine.shutdown().await;
     Ok(())
 }

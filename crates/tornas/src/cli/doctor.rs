@@ -116,7 +116,7 @@ pub fn run(opts: DoctorOpts) -> anyhow::Result<()> {
     }
     crate::outln!(
         "systemd:     {}",
-        if std::env::var_os("NOTIFY_SOCKET").is_some() {
+        if crate::systemd::notify_socket_present() {
             "notify socket present"
         } else {
             "not started by systemd"

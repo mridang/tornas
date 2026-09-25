@@ -82,16 +82,13 @@ impl Engine {
         }
         // Under systemd this process has a private mount namespace, so a disk that
         // is plugged back in never shows up here. When the host has it mounted
-        // again, exit and let systemd start a fresh process that sees it.
-        if !ok
-            && std::env::var_os("INVOCATION_ID").is_some()
-            && crate::health::host_has_disk(&self.opts.data_dir)
+        // again, let systemd start a fresh process that sees it.
+        if !ok && crate::systemd::is_managed() && crate::health::host_has_disk(&self.opts.data_dir)
         {
-            warn!("the data disk is mounted again on the host; restarting to pick it up");
             let _ = self
                 .catalog
                 .add_event("disk", "the data disk came back; restarting");
-            std::process::exit(75);
+            crate::systemd::restart_me("the data disk is mounted again on the host");
         }
         let st = self.pause.lock().clone();
         match st {

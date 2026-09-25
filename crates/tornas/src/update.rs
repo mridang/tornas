@@ -200,7 +200,7 @@ pub async fn auto_update_forever(
                     .catalog
                     .add_event("update", &format!("installed {version}, restarting"));
                 crate::metrics::update_installed();
-                crate::watchdog::stopping();
+                crate::systemd::stopping();
                 engine.session.stop().await;
                 let err = exec_self();
                 tracing::error!(
