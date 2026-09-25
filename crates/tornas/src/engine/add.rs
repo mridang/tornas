@@ -138,7 +138,7 @@ impl Engine {
                         added_at: now,
                         last_used_at: now,
                     },
-                    Some(m.raw.to_string()),
+                    Some(m.raw),
                 )
             }
             None => (
