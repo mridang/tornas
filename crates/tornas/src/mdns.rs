@@ -1,22 +1,116 @@
-//! mDNS / DNS-SD advertisement: announce any service on the local network so the
-//! box answers as `<name>.local` and shows up in LAN browsers. Borrowed from
-//! rqbit's own implementation.
+//! mDNS / DNS-SD advertisement: announce a service on the local network so the box
+//! answers as `<name>.local` and shows up in LAN browsers. Borrowed from rqbit's
+//! own implementation.
 //!
-//! Knows nothing about what is being advertised — the service type and TXT records
-//! are arguments.
+//! Knows nothing about what is being advertised. Describe a [`Service`], then
+//! [`Service::start`] it; the announcement lives until the returned
+//! [`Advertisement`] is dropped.
+//!
+//! ```ignore
+//! let _ad = Service::new("_http._tcp.local.", "tornas", 3030)?
+//!     .txt("path", "/")
+//!     .txt("api", "/api")
+//!     .start(listen_addr.ip())?;
+//! ```
 
-use std::net::SocketAddr;
+use std::net::IpAddr;
 
 use anyhow::{Context, bail};
 use mdns_sd::{DaemonEvent, ServiceDaemon, ServiceInfo};
 use tracing::{debug, info, warn};
 
-pub struct MdnsAdvertisement {
+/// A service to announce. Nothing happens until [`Service::start`].
+#[derive(Debug, Clone)]
+pub struct Service {
+    service_type: String,
+    /// Already sanitised: DNS-SD label rules are enforced on construction.
+    instance: String,
+    port: u16,
+    txt: Vec<(String, String)>,
+}
+
+impl Service {
+    /// `service_type` is a DNS-SD type such as `_http._tcp.local.`. `instance` is
+    /// both the service name and the `<instance>.local` hostname, and is reduced to
+    /// what DNS allows — see [`label`].
+    pub fn new(service_type: impl Into<String>, instance: &str, port: u16) -> anyhow::Result<Self> {
+        Ok(Self {
+            service_type: service_type.into(),
+            instance: label(instance)?,
+            port,
+            txt: Vec::new(),
+        })
+    }
+
+    /// Add a TXT record. Clients read these to find paths without guessing.
+    pub fn txt(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.txt.push((key.into(), value.into()));
+        self
+    }
+
+    /// The name this service answers to, e.g. `tornas.local`.
+    pub fn hostname(&self) -> String {
+        format!("{}.local", self.instance)
+    }
+
+    /// Begin announcing on `addr`. An unspecified address (`0.0.0.0` or `::`) lets
+    /// the daemon track the machine's real addresses as they change.
+    pub fn start(&self, addr: IpAddr) -> anyhow::Result<Advertisement> {
+        if addr.is_loopback() {
+            bail!("cannot advertise over mDNS: the listen address is loopback");
+        }
+        let daemon = ServiceDaemon::new().context("creating mDNS daemon")?;
+        spawn_monitor(&daemon)?;
+        daemon
+            .register(self.service_info(addr)?)
+            .context("registering mDNS service")?;
+        info!(
+            "mDNS: advertising http://{}:{}/",
+            self.hostname(),
+            self.port
+        );
+        Ok(Advertisement {
+            daemon,
+            hostname: self.hostname(),
+        })
+    }
+
+    fn service_info(&self, addr: IpAddr) -> anyhow::Result<ServiceInfo> {
+        let track_addresses = addr.is_unspecified();
+        let addr = if track_addresses {
+            String::new()
+        } else {
+            addr.to_string()
+        };
+        let txt: Vec<(&str, &str)> = self
+            .txt
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        let info = ServiceInfo::new(
+            &self.service_type,
+            &self.instance,
+            &format!("{}.local.", self.instance),
+            addr.as_str(),
+            self.port,
+            &txt[..],
+        )
+        .context("building mDNS service info")?;
+        Ok(if track_addresses {
+            info.enable_addr_auto()
+        } else {
+            info
+        })
+    }
+}
+
+/// A live announcement. Dropping it withdraws the service from the network.
+pub struct Advertisement {
     daemon: ServiceDaemon,
     pub hostname: String,
 }
 
-impl Drop for MdnsAdvertisement {
+impl Drop for Advertisement {
     fn drop(&mut self) {
         if let Err(e) = self.daemon.shutdown() {
             warn!("error shutting down mDNS daemon: {e:#}");
@@ -24,18 +118,10 @@ impl Drop for MdnsAdvertisement {
     }
 }
 
-/// `name` becomes both the DNS-SD instance and the `<name>.local` hostname.
-/// Advertise a service on the local network until the returned handle is dropped.
-///
-/// `service_type` is a DNS-SD type such as `_http._tcp.local.`; `properties` become
-/// the TXT record. Nothing here is specific to any one application.
-pub fn advertise(
-    service_type: &str,
-    name: &str,
-    listen_addr: SocketAddr,
-    properties: &[(&str, &str)],
-) -> anyhow::Result<MdnsAdvertisement> {
-    let name: String = name
+/// Reduce a name to a DNS label: lowercase, letters, digits and hyphens only.
+/// Anything else becomes a hyphen, and leading or trailing hyphens are dropped.
+fn label(name: &str) -> anyhow::Result<String> {
+    let label: String = name
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' {
@@ -47,35 +133,16 @@ pub fn advertise(
         .collect::<String>()
         .trim_matches('-')
         .to_owned();
-    if name.is_empty() {
-        bail!("mDNS name is empty after sanitising");
+    if label.is_empty() {
+        bail!("mDNS name {name:?} has nothing usable in it");
     }
-    let hostname = format!("{name}.local.");
-    let ip = listen_addr.ip();
-    if ip.is_loopback() {
-        bail!("cannot advertise over mDNS: HTTP listen address is loopback");
-    }
-    let addr_auto = ip.is_unspecified();
-    let addr = if addr_auto {
-        String::new()
-    } else {
-        ip.to_string()
-    };
-    let mut info = ServiceInfo::new(
-        service_type,
-        &name,
-        &hostname,
-        addr.as_str(),
-        listen_addr.port(),
-        properties,
-    )
-    .context("building mDNS service info")?;
-    if addr_auto {
-        info = info.enable_addr_auto();
-    }
-    let daemon = ServiceDaemon::new().context("creating mDNS daemon")?;
+    Ok(label)
+}
+
+/// Log what the daemon reports: announcements, and the renames that happen when two
+/// boxes pick the same name.
+fn spawn_monitor(daemon: &ServiceDaemon) -> anyhow::Result<()> {
     let monitor = daemon.monitor().context("monitoring mDNS daemon")?;
-    daemon.register(info).context("registering mDNS service")?;
     std::thread::Builder::new()
         .name("mdns-monitor".into())
         .spawn(move || {
@@ -88,13 +155,53 @@ pub fn advertise(
             }
         })
         .context("spawning mDNS monitor thread")?;
-    info!(
-        "mDNS: advertising http://{}:{}/",
-        hostname.trim_end_matches('.'),
-        listen_addr.port()
-    );
-    Ok(MdnsAdvertisement {
-        daemon,
-        hostname: hostname.trim_end_matches('.').to_owned(),
-    })
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn names_become_dns_labels() {
+        assert_eq!(label("tornas").unwrap(), "tornas");
+        assert_eq!(label("Living Room Box").unwrap(), "living-room-box");
+        assert_eq!(label("--x--").unwrap(), "x");
+        assert_eq!(label("piÑata_2").unwrap(), "pi-ata-2");
+        assert!(label("").is_err());
+        assert!(
+            label("...").is_err(),
+            "nothing usable is an error, not an empty name"
+        );
+    }
+
+    #[test]
+    fn a_service_knows_the_name_it_will_answer_to() {
+        let s = Service::new("_http._tcp.local.", "Living Room", 3030).unwrap();
+        assert_eq!(s.hostname(), "living-room.local");
+    }
+
+    #[test]
+    fn loopback_is_refused_before_any_daemon_is_created() {
+        let s = Service::new("_http._tcp.local.", "tornas", 3030).unwrap();
+        let Err(err) = s.start("127.0.0.1".parse().unwrap()) else {
+            panic!("loopback must be refused");
+        };
+        assert!(err.to_string().contains("loopback"), "{err}");
+    }
+
+    #[test]
+    fn txt_records_are_kept_in_order() {
+        let s = Service::new("_http._tcp.local.", "tornas", 3030)
+            .unwrap()
+            .txt("path", "/")
+            .txt("api", "/api");
+        assert_eq!(
+            s.txt,
+            vec![
+                ("path".to_owned(), "/".to_owned()),
+                ("api".to_owned(), "/api".to_owned())
+            ]
+        );
+    }
 }

@@ -134,16 +134,17 @@ pub async fn run_server(
     let _mdns = if opts.disable_mdns || opts.http_listen.ip().is_loopback() {
         None
     } else {
-        match mdns::advertise(
+        match mdns::Service::new(
             "_http._tcp.local.",
             &opts.mdns_name,
-            opts.http_listen,
-            &[
-                ("path", "/"),
-                ("manifest", "/manifest.json"),
-                ("api", "/api"),
-            ],
-        ) {
+            opts.http_listen.port(),
+        )
+        .and_then(|s| {
+            s.txt("path", "/")
+                .txt("manifest", "/manifest.json")
+                .txt("api", "/api")
+                .start(opts.http_listen.ip())
+        }) {
             Ok(m) => Some(m),
             Err(e) => {
                 warn!("mDNS advertisement failed, continuing without it: {e:#}");
