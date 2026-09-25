@@ -18,9 +18,9 @@ macro_rules! outln {
 
 pub mod budget;
 pub mod catalog;
+pub mod cli;
 pub mod config;
 pub mod dlna;
-pub mod doctor;
 pub mod engine;
 pub mod fixtures;
 pub mod health;
@@ -32,7 +32,6 @@ pub mod netacl;
 pub mod schedule;
 pub mod tmdb;
 pub mod trackers;
-pub mod tui;
 pub mod tuning;
 pub mod units;
 pub mod update;

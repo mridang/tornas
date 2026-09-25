@@ -40,8 +40,8 @@ fn main() -> anyhow::Result<()> {
                 });
                 tornas::run_server(opts, cancel).await
             }
-            Command::Status(o) => tornas::tui::status(o).await,
-            Command::Top(o) => tornas::tui::top(o).await,
+            Command::Status(o) => tornas::cli::status(o).await,
+            Command::Top(o) => tornas::cli::top(o).await,
             Command::Fixtures(o) => {
                 let fx = tornas::fixtures::generate(&o).await?;
                 tornas::outln!("wrote {} fixtures to {}", fx.len(), o.out.display());
@@ -53,10 +53,10 @@ fn main() -> anyhow::Result<()> {
             Command::Seed(o) => tornas::fixtures::run_seed(o).await,
             Command::Health(o) => tornas::health::run(o).await,
             Command::SelfUpdate(o) => tornas::update::run(o).await,
-            Command::Doctor(o) => tornas::doctor::run(o),
-            Command::Logs(o) => tornas::tui::logs(o).await,
-            Command::Pause(o) => tornas::tui::pause(o).await,
-            Command::Resume(o) => tornas::tui::resume(o).await,
+            Command::Doctor(o) => tornas::cli::doctor(o),
+            Command::Logs(o) => tornas::cli::logs(o).await,
+            Command::Pause(o) => tornas::cli::pause(o).await,
+            Command::Resume(o) => tornas::cli::resume(o).await,
             Command::Config(c) => tornas::config::check::run(c),
         }
     })
