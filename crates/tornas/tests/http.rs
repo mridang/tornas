@@ -172,6 +172,71 @@ async fn api_stremio_and_video() {
         .expect("a stream url")
         .to_owned();
     assert!(url.contains(&format!("/video/{imdb}")), "{url}");
+    // Subtitle addons match on the filename, so it has to be there.
+    let hints = &streams["streams"][0]["behaviorHints"];
+    assert!(hints["filename"].is_string(), "{streams}");
+    assert!(hints["videoSize"].as_u64().unwrap() > 0, "{streams}");
+
+    // The catalogue honours the extras it declares. They arrive as one path
+    // segment shaped like a query string, not as a real query string.
+    let title = cat["metas"][0]["name"].as_str().unwrap().to_owned();
+    let word = title.split_whitespace().next().unwrap().to_lowercase();
+    let (_, hit) = s
+        .json(
+            M::GET,
+            &format!("/catalog/movie/local/search={word}.json"),
+            None,
+        )
+        .await;
+    assert!(
+        hit["metas"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["id"] == *imdb),
+        "search for {word:?} found nothing: {hit}"
+    );
+    let (_, miss) = s
+        .json(
+            M::GET,
+            "/catalog/movie/local/search=definitelynotamovie.json",
+            None,
+        )
+        .await;
+    assert_eq!(miss["metas"].as_array().unwrap().len(), 0, "{miss}");
+    let (_, skipped) = s
+        .json(M::GET, "/catalog/movie/local/skip=500.json", None)
+        .await;
+    assert_eq!(skipped["metas"].as_array().unwrap().len(), 0, "{skipped}");
+
+    // /meta returns a full meta object, not the catalogue preview.
+    let (st, meta) = s
+        .json(M::GET, &format!("/meta/movie/{imdb}.json"), None)
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(meta["meta"]["id"], *imdb);
+    assert_eq!(meta["meta"]["type"], "movie");
+    assert!(
+        meta["meta"]["videos"].as_array().unwrap().len() == 1,
+        "{meta}"
+    );
+
+    // A resource this addon does not serve answers in the protocol's shape, not
+    // tornas's error envelope.
+    let (st, err) = s
+        .json(M::GET, &format!("/subtitles/movie/{imdb}.json"), None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    assert_eq!(err["err"], "not found", "{err}");
+
+    // The manifest advertises exactly what is implemented.
+    let resources = manifest["resources"].as_array().unwrap();
+    assert!(resources.iter().any(|r| r == "catalog"), "{manifest}");
+    assert!(
+        !resources.iter().any(|r| r == "subtitles"),
+        "must not advertise a resource with no handler: {manifest}"
+    );
+    assert_eq!(manifest["catalogs"][0]["extra"][0]["name"], "search");
 
     // Seeking players use ranges.
     let r = s
