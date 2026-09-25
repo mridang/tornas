@@ -258,6 +258,9 @@ pub struct ServerOpts {
     /// Friendly name announced over DLNA/UPnP.
     #[arg(long, env = "TORNAS_DLNA_NAME")]
     pub dlna_name: Option<String>,
+    /// Name shown for the Stremio addon. Defaults to "Tornas".
+    #[arg(long, env = "TORNAS_ADDON_NAME")]
+    pub addon_name: Option<String>,
     /// Disable the DLNA/UPnP media server.
     #[arg(long, env = "TORNAS_DLNA_DISABLE")]
     pub disable_dlna: bool,

@@ -6,3 +6,4 @@
 //! `crate::dlna` and `crate::mdns` stay free of any reference to this crate.
 
 pub mod dlna;
+pub mod stremio;

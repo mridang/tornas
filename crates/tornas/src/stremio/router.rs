@@ -11,7 +11,7 @@ use std::sync::Arc;
 use axum::{
     Router,
     extract::{RawPathParams, State},
-    http::{HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -47,6 +47,9 @@ pub struct RouterOptions {
     /// beside other routes that should keep their own 404s.
     pub fallback: bool,
     pub config_mode: ConfigMode,
+    /// Absolute URL this addon is reachable at. Leave `None` to derive it from
+    /// each request's `Host` header, which is what a LAN box wants.
+    pub public_url: Option<String>,
 }
 
 impl Default for RouterOptions {
@@ -55,6 +58,7 @@ impl Default for RouterOptions {
             landing: true,
             fallback: true,
             config_mode: ConfigMode::Disabled,
+            public_url: None,
         }
     }
 }
@@ -223,6 +227,7 @@ fn strip_json(s: &str) -> &str {
 async fn dispatch<C, M, S, Sb, Ac>(
     State(m): Shared<C, M, S, Sb, Ac>,
     params: RawPathParams,
+    headers: HeaderMap,
 ) -> Response
 where
     C: CatalogHandler,
@@ -242,12 +247,14 @@ where
         extra,
         config,
     } = req;
+    let base_url = base_url(&m.opts, &headers);
 
     match resource {
         Resource::Catalog => reply(
             m.addon
                 .catalog
                 .catalog(CatalogRequest {
+                    base_url,
                     content_type,
                     id,
                     extra,
@@ -259,6 +266,7 @@ where
             m.addon
                 .meta
                 .meta(MetaRequest {
+                    base_url,
                     content_type,
                     id,
                     config,
@@ -269,6 +277,7 @@ where
             m.addon
                 .stream
                 .stream(StreamRequest {
+                    base_url,
                     content_type,
                     id,
                     config,
@@ -279,6 +288,7 @@ where
             m.addon
                 .subtitles
                 .subtitles(SubtitlesRequest {
+                    base_url,
                     content_type,
                     id,
                     extra,
@@ -290,6 +300,7 @@ where
             m.addon
                 .addon_catalog
                 .addon_catalog(AddonCatalogRequest {
+                    base_url,
                     content_type,
                     id,
                     config,
@@ -343,6 +354,23 @@ pub(super) fn parse(segs: &[String], mode: ConfigMode) -> Option<Parsed> {
         (5, _) => build(Some(decoded(&segs[0])), &segs[1..4], Some(&segs[4])),
         _ => None,
     }
+}
+
+/// Where the caller reached us, honouring a configured public URL and the usual
+/// reverse-proxy header.
+fn base_url(opts: &RouterOptions, headers: &HeaderMap) -> String {
+    if let Some(u) = &opts.public_url {
+        return u.trim_end_matches('/').to_owned();
+    }
+    let host = headers
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("localhost");
+    let scheme = headers
+        .get("x-forwarded-proto")
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("http");
+    format!("{scheme}://{host}")
 }
 
 /// Only for segments that are not extras; extras are decoded after splitting.

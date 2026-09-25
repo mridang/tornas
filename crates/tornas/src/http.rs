@@ -8,7 +8,6 @@ pub mod api;
 pub mod dashboard;
 pub mod middleware;
 pub mod netacl;
-pub mod stremio;
 pub mod video;
 
 use std::sync::Arc;
@@ -31,7 +30,6 @@ use api::{
 };
 use dashboard::index;
 use middleware::{allow_private_network, require_allowed_source, require_token};
-use stremio::{catalog, manifest, meta, stream_list};
 use video::video;
 
 pub type AppState = Arc<Engine>;
@@ -159,22 +157,34 @@ pub fn router(engine: AppState, upnp: Option<Router>) -> Router {
             "/api/movies/{imdb_id}",
             get(api_get).patch(api_patch).delete(api_delete),
         )
-        // Stremio addon protocol
-        .route("/manifest.json", get(manifest))
-        .route("/catalog/movie/{id}", get(catalog))
-        .route("/catalog/movie/{id}/{extra}", get(catalog))
-        .route("/meta/movie/{id}", get(meta))
-        .route("/stream/movie/{id}", get(stream_list))
         // Video bytes, shared by Stremio and DLNA
         .route("/video/{imdb_id}/{filename}", get(video))
         .route("/video/{imdb_id}", get(video));
+    // The Stremio addon brings its own routes and its own state, so it is merged
+    // after this router's state is applied. Merging at the root keeps the URLs
+    // people already have installed working. Its manifest is static, so a build
+    // error is a programming mistake rather than a runtime condition.
+    let addon = crate::adapters::stremio::addon(engine.clone()).expect("valid addon manifest");
+    let stremio = crate::stremio::router_with(
+        addon,
+        crate::stremio::RouterOptions {
+            // tornas serves its own dashboard at `/`, and applies its own CORS and
+            // source-address checks to every route, these included.
+            landing: false,
+            fallback: false,
+            config_mode: crate::stremio::ConfigMode::Disabled,
+            public_url: engine.opts.public_url.clone(),
+        },
+    );
+
     let engine_for_acl = engine.clone();
     let mut r = r
         .layer(axum::middleware::from_fn_with_state(
             engine.clone(),
             require_token,
         ))
-        .with_state(engine);
+        .with_state(engine)
+        .merge(stremio);
     if let Some(u) = upnp {
         r = r.nest("/upnp", u);
     }
