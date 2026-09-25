@@ -68,88 +68,195 @@ pub enum Outcome {
     Installed { version: String, path: PathBuf },
 }
 
-/// Fetch the release, verify and install. Shared by the CLI and the auto-updater.
-pub async fn fetch_and_install(
-    repo: &str,
-    version: Option<&str>,
+/// What a release lookup found.
+pub struct Available {
+    pub current: String,
+    pub latest: String,
+    /// Whether `latest` is actually newer than what is running.
+    pub newer: bool,
+    release: Release,
+}
+
+/// An update to perform: which repository, which version, and how strict to be.
+///
+/// Construct it once — the defaults are the safe ones, and each relaxation has to
+/// be asked for by name rather than passed as a positional flag.
+pub struct Updater {
+    repo: String,
+    /// A specific tag, or the latest release.
+    version: Option<String>,
+    /// Install even when the running version is not older.
     force: bool,
+    /// Install even when the release publishes no checksum.
     allow_unverified: bool,
-    install_path: Option<&Path>,
-) -> anyhow::Result<Outcome> {
-    let arch = asset_arch()?;
-    let client = reqwest::Client::builder()
-        .user_agent(concat!("tornas/", env!("CARGO_PKG_VERSION")))
-        .build()?;
-    let url = match version {
-        Some(v) => format!(
-            "https://api.github.com/repos/{repo}/releases/tags/{}",
-            v.trim_start_matches('v')
-        ),
-        None => format!("https://api.github.com/repos/{repo}/releases/latest"),
-    };
-    let release: Release = client
-        .get(&url)
-        .send()
-        .await
-        .with_context(|| format!("GET {url}"))?
-        .error_for_status()
-        .context("GitHub release lookup")?
-        .json()
-        .await?;
-    let current = env!("CARGO_PKG_VERSION").to_owned();
-    let newer = version_newer(&release.tag_name, &current);
-    if !newer && !force && version.is_none() {
-        return Ok(Outcome::UpToDate {
-            current,
-            available: release.tag_name,
-        });
+    /// Where to write, if not this executable.
+    install_path: Option<PathBuf>,
+    client: reqwest::Client,
+}
+
+impl Updater {
+    pub fn new(repo: impl Into<String>) -> anyhow::Result<Self> {
+        Ok(Self {
+            repo: repo.into(),
+            version: None,
+            force: false,
+            allow_unverified: false,
+            install_path: None,
+            client: reqwest::Client::builder()
+                .user_agent(concat!("tornas/", env!("CARGO_PKG_VERSION")))
+                .build()
+                .context("building HTTP client")?,
+        })
     }
-    let bin_name = format!("tornas-{arch}");
-    let bin = release
-        .assets
-        .iter()
-        .find(|a| a.name == bin_name)
-        .with_context(|| format!("release has no asset {bin_name}"))?;
-    let sum = release
-        .assets
-        .iter()
-        .find(|a| a.name == format!("{bin_name}.sha256"));
-    info!(
-        "downloading {} ({} bytes)",
-        bin.browser_download_url, bin.size
-    );
-    let bytes = client
-        .get(&bin.browser_download_url)
-        .send()
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?;
-    if let Some(sum) = sum {
-        let text = client
-            .get(&sum.browser_download_url)
+
+    /// The settings behind `tornas self-update`.
+    pub fn from_opts(opts: &UpdateOpts) -> anyhow::Result<Self> {
+        Ok(Self {
+            version: opts.version.clone(),
+            force: opts.force,
+            allow_unverified: opts.allow_unverified,
+            install_path: opts.install_path.clone(),
+            ..Self::new(opts.repo.clone())?
+        })
+    }
+
+    pub fn version(mut self, tag: impl Into<String>) -> Self {
+        self.version = Some(tag.into());
+        self
+    }
+
+    pub fn force(mut self, yes: bool) -> Self {
+        self.force = yes;
+        self
+    }
+
+    pub fn allow_unverified(mut self, yes: bool) -> Self {
+        self.allow_unverified = yes;
+        self
+    }
+
+    pub fn install_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.install_path = Some(path.into());
+        self
+    }
+
+    /// Ask GitHub what is published, without downloading anything.
+    pub async fn check(&self) -> anyhow::Result<Available> {
+        let url = match &self.version {
+            Some(v) => format!(
+                "https://api.github.com/repos/{}/releases/tags/{}",
+                self.repo,
+                v.trim_start_matches('v')
+            ),
+            None => format!("https://api.github.com/repos/{}/releases/latest", self.repo),
+        };
+        let release: Release = self
+            .client
+            .get(&url)
             .send()
-            .await?
-            .error_for_status()?
-            .text()
+            .await
+            .with_context(|| format!("GET {url}"))?
+            .error_for_status()
+            .context("GitHub release lookup")?
+            .json()
             .await?;
-        let expected = parse_sha256(&text).context("unreadable checksum asset")?;
-        let actual = sha256_hex(&bytes);
-        if expected != actual {
-            bail!("checksum mismatch: expected {expected}, got {actual}; not installing");
-        }
-    } else if !allow_unverified {
-        bail!("release has no {bin_name}.sha256 asset; refusing to install unverified");
+        let current = env!("CARGO_PKG_VERSION").to_owned();
+        Ok(Available {
+            newer: version_newer(&release.tag_name, &current),
+            latest: release.tag_name.clone(),
+            current,
+            release,
+        })
     }
-    let target = match install_path {
-        Some(p) => p.to_owned(),
-        None => std::env::current_exe().context("locating current executable")?,
-    };
-    install_atomically(&target, &bytes)?;
-    Ok(Outcome::Installed {
-        version: release.tag_name,
-        path: target,
-    })
+
+    /// Whether this update should go ahead: normally only when the release is
+    /// newer, unless a version was pinned or `force` was asked for.
+    fn wanted(&self, found: &Available) -> bool {
+        found.newer || self.force || self.version.is_some()
+    }
+
+    /// Look up the latest release and install it if it is newer.
+    pub async fn install(&self) -> anyhow::Result<Outcome> {
+        let found = self.check().await?;
+        self.install_when_wanted(&found).await
+    }
+
+    /// Install a release already looked up by [`Updater::check`], unless nothing
+    /// newer is published.
+    pub async fn install_when_wanted(&self, found: &Available) -> anyhow::Result<Outcome> {
+        if !self.wanted(found) {
+            return Ok(Outcome::UpToDate {
+                current: found.current.clone(),
+                available: found.latest.clone(),
+            });
+        }
+        self.install_release(found).await
+    }
+
+    /// Install a release already looked up by [`Updater::check`].
+    pub async fn install_release(&self, found: &Available) -> anyhow::Result<Outcome> {
+        let bytes = self.download_verified(&found.release).await?;
+        let target = match &self.install_path {
+            Some(p) => p.clone(),
+            None => std::env::current_exe().context("locating current executable")?,
+        };
+        install_atomically(&target, &bytes)?;
+        Ok(Outcome::Installed {
+            version: found.latest.clone(),
+            path: target,
+        })
+    }
+
+    /// The release binary for this architecture, checked against its published
+    /// SHA-256. Refuses an unverified download unless that was asked for.
+    async fn download_verified(&self, release: &Release) -> anyhow::Result<Vec<u8>> {
+        let bin_name = format!("tornas-{}", asset_arch()?);
+        let bin = release
+            .assets
+            .iter()
+            .find(|a| a.name == bin_name)
+            .with_context(|| format!("release has no asset {bin_name}"))?;
+        info!(
+            "downloading {} ({} bytes)",
+            bin.browser_download_url, bin.size
+        );
+        let bytes = self.get_bytes(&bin.browser_download_url).await?;
+
+        let checksum = release
+            .assets
+            .iter()
+            .find(|a| a.name == format!("{bin_name}.sha256"));
+        match checksum {
+            Some(sum) => {
+                let text = String::from_utf8(self.get_bytes(&sum.browser_download_url).await?)
+                    .context("checksum asset is not text")?;
+                let expected = parse_sha256(&text).context("unreadable checksum asset")?;
+                let actual = sha256_hex(&bytes);
+                if expected != actual {
+                    bail!("checksum mismatch: expected {expected}, got {actual}; not installing");
+                }
+            }
+            None if self.allow_unverified => {}
+            None => bail!(
+                "release has no {bin_name}.sha256 asset; refusing to install unverified \
+                 (pass --allow-unverified to override)"
+            ),
+        }
+        Ok(bytes)
+    }
+
+    async fn get_bytes(&self, url: &str) -> anyhow::Result<Vec<u8>> {
+        Ok(self
+            .client
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?
+            .error_for_status()?
+            .bytes()
+            .await?
+            .to_vec())
+    }
 }
 
 /// Replace this process with the freshly installed binary, keeping argv and the
@@ -189,7 +296,14 @@ pub async fn auto_update_forever(
             _ = cancel.cancelled() => return,
             _ = tokio::time::sleep(interval + jitter) => {}
         }
-        match fetch_and_install(&repo, None, false, false, None).await {
+        let updater = match Updater::new(repo.clone()) {
+            Ok(u) => u,
+            Err(e) => {
+                tracing::warn!("auto-update: {e:#}");
+                return;
+            }
+        };
+        match updater.install().await {
             Ok(Outcome::UpToDate { .. }) => {}
             Ok(Outcome::Installed { version, path }) => {
                 info!(
@@ -213,101 +327,50 @@ pub async fn auto_update_forever(
     }
 }
 
+/// `tornas self-update`: report what is published, then install it unless this is
+/// only a check.
 pub async fn run(opts: UpdateOpts) -> anyhow::Result<()> {
     if apt_managed() && !opts.force && opts.install_path.is_none() {
         bail!(
             "tornas was installed from a .deb; run `apt update && apt install tornas` instead (or pass --force)"
         );
     }
-    let arch = asset_arch()?;
-    let client = reqwest::Client::builder()
-        .user_agent(concat!("tornas/", env!("CARGO_PKG_VERSION")))
-        .build()?;
-    let url = match &opts.version {
-        Some(v) => format!(
-            "https://api.github.com/repos/{}/releases/tags/{}",
-            opts.repo,
-            v.trim_start_matches('v')
-        ),
-        None => format!("https://api.github.com/repos/{}/releases/latest", opts.repo),
-    };
-    let release: Release = client
-        .get(&url)
-        .send()
-        .await
-        .with_context(|| format!("GET {url}"))?
-        .error_for_status()
-        .context("GitHub release lookup")?
-        .json()
-        .await?;
-    let current = env!("CARGO_PKG_VERSION");
-    let newer = version_newer(&release.tag_name, current);
-    crate::outln!("current {current}, available {} ({arch})", release.tag_name);
-    if opts.check {
-        if newer {
+    let restart = opts.restart;
+    let service = opts.service.clone();
+    let check_only = opts.check;
+    let updater = Updater::from_opts(&opts)?;
+
+    let found = updater.check().await?;
+    crate::outln!(
+        "current {}, available {} ({})",
+        found.current,
+        found.latest,
+        asset_arch()?
+    );
+    if check_only {
+        if found.newer {
             crate::outln!("update available");
             std::process::exit(10);
         }
         crate::outln!("up to date");
         return Ok(());
     }
-    if !newer && !opts.force && opts.version.is_none() {
-        crate::outln!("up to date");
-        return Ok(());
-    }
-    let bin_name = format!("tornas-{arch}");
-    let bin = release
-        .assets
-        .iter()
-        .find(|a| a.name == bin_name)
-        .with_context(|| format!("release has no asset {bin_name}"))?;
-    let sum = release
-        .assets
-        .iter()
-        .find(|a| a.name == format!("{bin_name}.sha256"));
-
-    info!(
-        "downloading {} ({} bytes)",
-        bin.browser_download_url, bin.size
-    );
-    let bytes = client
-        .get(&bin.browser_download_url)
-        .send()
-        .await?
-        .error_for_status()?
-        .bytes()
-        .await?;
-    if let Some(sum) = sum {
-        let text = client
-            .get(&sum.browser_download_url)
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
-        let expected = parse_sha256(&text).context("unreadable checksum asset")?;
-        let actual = sha256_hex(&bytes);
-        if expected != actual {
-            bail!("checksum mismatch: expected {expected}, got {actual}; not installing");
+    match updater.install_when_wanted(&found).await? {
+        Outcome::UpToDate { .. } => {
+            crate::outln!("up to date");
+            return Ok(());
         }
-        crate::outln!("checksum verified");
-    } else if !opts.allow_unverified {
-        bail!("release has no {bin_name}.sha256 asset; pass --allow-unverified to install anyway");
+        Outcome::Installed { version, path } => {
+            crate::outln!("installed {version} to {}", path.display());
+        }
     }
 
-    let target = match &opts.install_path {
-        Some(p) => p.clone(),
-        None => std::env::current_exe().context("locating current executable")?,
-    };
-    install_atomically(&target, &bytes)?;
-    crate::outln!("installed {} to {}", release.tag_name, target.display());
-
-    if opts.restart {
-        let st = std::process::Command::new("systemctl")
-            .args(["restart", &opts.service])
-            .status();
-        match st {
-            Ok(s) if s.success() => crate::outln!("restarted {}", opts.service),
+    if restart {
+        match std::process::Command::new("systemctl")
+            .args(["restart", &service])
+            .status()
+        {
+            Ok(s) if s.success() => crate::outln!("restarted {service}"),
             Ok(s) => bail!("systemctl restart exited with {s}"),
             Err(e) => bail!("running systemctl: {e}"),
         }
@@ -365,5 +428,38 @@ mod tests {
         install_atomically(&target, b"new").unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
         assert!(std::fs::read_dir(dir.path()).unwrap().count() == 1);
+    }
+
+    fn found(latest: &str, newer: bool) -> Available {
+        Available {
+            current: "1.0.0".into(),
+            latest: latest.into(),
+            newer,
+            release: Release {
+                tag_name: latest.into(),
+                assets: vec![],
+            },
+        }
+    }
+
+    #[test]
+    fn decides_when_an_update_should_go_ahead() {
+        let u = Updater::new("mridang/tornas").unwrap();
+        assert!(u.wanted(&found("v1.1.0", true)), "a newer release installs");
+        assert!(
+            !u.wanted(&found("v1.0.0", false)),
+            "the same version does not"
+        );
+        assert!(
+            u.force(true).wanted(&found("v1.0.0", false)),
+            "--force installs anyway"
+        );
+        assert!(
+            Updater::new("mridang/tornas")
+                .unwrap()
+                .version("v0.9.0")
+                .wanted(&found("v0.9.0", false)),
+            "a pinned version installs even when it is older"
+        );
     }
 }
