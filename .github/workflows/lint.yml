@@ -36,3 +36,17 @@ jobs:
 
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      # The protocol modules are self-contained on purpose: each defines what it
+      # needs from the application rather than reaching into it. See
+      # docs/ARCHITECTURE.md.
+      - name: Protocol modules stay independent
+        run: |
+          cd crates/tornas/src
+          # Self-references (crate::stremio::… from inside stremio) are fine; a
+          # reference to any other module is not.
+          if grep -rn 'crate::' stremio stremio.rs dlna dlna.rs mdns.rs \
+              | grep -v 'crate::stremio::' | grep -v 'crate::dlna::'; then
+            echo "::error::stremio, dlna and mdns must not import from this crate"
+            exit 1
+          fi

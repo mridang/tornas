@@ -77,6 +77,7 @@ Three layers, later ones win: the TOML config file (found automatically as above
 | `--tmdb-token` | `TORNAS_TMDB_TOKEN` | | TMDB v4 read access token |
 | `--tmdb-api-key` | `TORNAS_TMDB_API_KEY` | | TMDB v3 key (alternative) |
 | `--dlna-name` | `TORNAS_DLNA_NAME` | `Tornas @ host` | name shown on TVs |
+| `--addon-name` | `TORNAS_ADDON_NAME` | `Tornas` | name shown for the Stremio addon |
 | `--mdns-name` | `TORNAS_MDNS_NAME` | `tornas` | advertised as `<name>.local` |
 | `--disable-mdns` | `TORNAS_MDNS_DISABLE` | | |
 | `--require-mount` | `TORNAS_REQUIRE_MOUNT` | off (on in the unit) | refuse to run on the root filesystem |
@@ -316,6 +317,12 @@ Per-torrent series carry only an `imdb_id` label; the descriptive fields (info h
 Not available: tracker announce counts and results. Announces happen inside librqbit, which exposes no hook for them; `tornas_torrent_trackers{scheme}` shows which trackers each torrent was given, but not whether they answered.
 
 ## Stremio
+
+tornas is a full Stremio addon: `catalog`, `meta` and `stream`, with the catalogue
+honouring the `search`, `genre` and `skip` extras, and streams carrying
+`behaviorHints.filename` and `videoSize` so subtitle addons can match them. The
+protocol implementation lives in [`crates/tornas/src/stremio/`](crates/tornas/src/stremio)
+and knows nothing about tornas — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 * **Stremio desktop / Android / TV:** Addons, paste `http://<server-ip>:3030/manifest.json`.
 * **web.stremio.com:** the site is HTTPS, so the browser only lets it call plain-HTTP addons on `localhost`/`127.0.0.1`, or over the local network after you accept Chrome's "allow access to local network" prompt (Chrome 138+; Firefox and Safari need HTTPS). For a LAN server without that prompt, run with `--tls-cert/--tls-key` (a self-signed certificate must then be trusted by the browser) and set `--public-url https://...`.
