@@ -1,93 +1,96 @@
 //! `status`: a one-shot view of a running server.
 
-use super::api::{HEADERS, fetch, movie_rows, pause_line, s, u};
+use super::api::{Api, HEADERS, Status, movie_rows, pause_line};
 use crate::{
     config::ClientOpts,
     units::{human_age, human_bytes, human_rate, now_secs},
 };
 
 pub async fn status(opts: ClientOpts) -> anyhow::Result<()> {
-    let v = fetch(&opts.server).await?;
+    let api = Api::new(&opts.server, None)?;
     if opts.json {
-        crate::outln!("{}", serde_json::to_string_pretty(&v)?);
+        // Print what the server actually said, not a re-serialisation of the
+        // subset this command models.
+        crate::outln!("{}", api.status_json().await?);
         return Ok(());
     }
-    let b = &v["budget"];
-    if let Some(line) = pause_line(&v) {
+    let s = api.status().await?;
+    if let Some(line) = pause_line(&s.pause) {
         crate::outln!("{line}");
     }
+    print_summary(&s);
+    for w in &s.warnings {
+        crate::outln!("warning: {w}");
+    }
+    crate::outln!();
+    print_table(&s);
+    crate::outln!();
+    print_events(&s);
+    Ok(())
+}
+
+fn print_summary(s: &Status) {
     crate::outln!(
         "tornas {} on {}  up {}",
-        s(&v, "version"),
-        s(&v, "hostname"),
-        human_age(u(&v, &["session", "uptime_secs"]) as i64)
+        s.version,
+        s.hostname,
+        human_age(s.session.uptime_secs as i64)
     );
     crate::outln!(
         "budget: {} / {} used, disk free {} (min {}), next eviction: {}",
-        human_bytes(u(b, &["used"])),
-        human_bytes(u(b, &["limit"])),
-        human_bytes(u(b, &["disk_free"])),
-        human_bytes(u(b, &["min_free"])),
-        b.get("next_eviction")
-            .and_then(|n| n.get("title"))
-            .and_then(|t| t.as_str())
-            .unwrap_or("none")
+        human_bytes(s.budget.used),
+        human_bytes(s.budget.limit),
+        human_bytes(s.budget.disk_free),
+        human_bytes(s.budget.min_free),
+        s.budget
+            .next_eviction
+            .as_ref()
+            .map_or("none", |c| c.title.as_str())
     );
     crate::outln!(
         "session: down {}  up {}  peers {}  torrents {}",
-        human_rate(u(&v, &["session", "download_bps"])),
-        human_rate(u(&v, &["session", "upload_bps"])),
-        u(&v, &["session", "peers_live"]),
-        u(&v, &["session", "torrents"])
+        human_rate(s.session.download_bps),
+        human_rate(s.session.upload_bps),
+        s.session.peers_live,
+        s.session.torrents
     );
-    if let Some(ws) = v.get("warnings").and_then(|w| w.as_array())
-        && !ws.is_empty()
-    {
-        for w in ws {
-            crate::outln!("warning: {}", w.as_str().unwrap_or_default());
-        }
-    }
-    crate::outln!();
-    let rows = movie_rows(&v);
+}
+
+/// The library as a left-aligned table, each column as wide as its widest cell
+/// and titles cut at 40 characters.
+fn print_table(s: &Status) {
+    const MAX_CELL: usize = 40;
+    let rows = movie_rows(s);
     let mut widths: Vec<usize> = HEADERS.iter().map(|h| h.len()).collect();
     for r in &rows {
         for (i, c) in r.iter().enumerate() {
-            widths[i] = widths[i].max(c.chars().count().min(40));
+            widths[i] = widths[i].max(c.chars().count().min(MAX_CELL));
         }
     }
-    let fmt = |cells: &[String]| {
+    let line = |cells: &[String]| {
         cells
             .iter()
             .enumerate()
             .map(|(i, c)| {
-                format!(
-                    "{:<w$}",
-                    c.chars().take(40).collect::<String>(),
-                    w = widths[i]
-                )
+                let cell: String = c.chars().take(MAX_CELL).collect();
+                format!("{cell:<width$}", width = widths[i])
             })
             .collect::<Vec<_>>()
             .join("  ")
     };
-    crate::outln!(
-        "{}",
-        fmt(&HEADERS.iter().map(|h| h.to_string()).collect::<Vec<_>>())
-    );
+    crate::outln!("{}", line(&HEADERS.map(str::to_owned)));
     for r in &rows {
-        crate::outln!("{}", fmt(r));
+        crate::outln!("{}", line(r));
     }
-    crate::outln!();
-    if let Some(events) = v.get("events").and_then(|e| e.as_array()) {
-        crate::outln!("recent events:");
-        for e in events.iter().take(10) {
-            let ts = e.get("ts").and_then(|t| t.as_i64()).unwrap_or(0);
-            crate::outln!(
-                "  {:>5} ago  {:<7} {}",
-                human_age(now_secs() - ts),
-                s(e, "kind"),
-                s(e, "message")
-            );
-        }
+}
+
+fn print_events(s: &Status) {
+    if s.events.is_empty() {
+        return;
     }
-    Ok(())
+    crate::outln!("recent events:");
+    let now = now_secs();
+    for e in s.events.iter().take(10) {
+        crate::outln!("  {:>5} ago  {}", human_age(now - e.ts), e.message);
+    }
 }
