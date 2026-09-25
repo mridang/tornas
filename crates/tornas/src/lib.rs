@@ -28,7 +28,6 @@ pub mod http;
 pub mod logging;
 pub mod mdns;
 pub mod metrics;
-pub mod netacl;
 pub mod schedule;
 pub mod tmdb;
 pub mod trackers;

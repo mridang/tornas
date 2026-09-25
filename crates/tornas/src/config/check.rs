@@ -117,7 +117,9 @@ pub fn validate_file_config(fc: &FileConfig) -> Report {
     if fc.network.allow_from.is_empty() {
         r.err("network.allow_from is empty, so nothing could reach the server; use [\"0.0.0.0/0\", \"::/0\"] to allow every address");
     }
-    if let Err(e) = crate::netacl::Acl::new(&fc.network.allow_from, &fc.network.trusted_proxies) {
+    if let Err(e) =
+        crate::http::netacl::Acl::new(&fc.network.allow_from, &fc.network.trusted_proxies)
+    {
         r.err(format!("network: {e:#}"));
     }
     r
@@ -390,9 +392,9 @@ pub fn check_env_text(text: &str) -> Report {
         if let Some(l) = get(k) {
             let v = [l.value.clone()];
             let res = if is_allow {
-                crate::netacl::Acl::new(&v, &[])
+                crate::http::netacl::Acl::new(&v, &[])
             } else {
-                crate::netacl::Acl::new(&["0.0.0.0/0".into()], &v)
+                crate::http::netacl::Acl::new(&["0.0.0.0/0".into()], &v)
             };
             if let Err(e) = res {
                 r.err(format!("line {}: {k}: {e:#}", l.line));

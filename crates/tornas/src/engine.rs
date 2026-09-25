@@ -72,7 +72,7 @@ pub struct Engine {
     pub tmdb: Option<Tmdb>,
     pub opts: ServerOpts,
     pub file_config: FileConfig,
-    pub acl: crate::netacl::Acl,
+    pub acl: crate::http::netacl::Acl,
     pub trackers: TrackerFeed,
     pub torrents_dir: PathBuf,
     /// Saved .torrent files for movies added from a file rather than a magnet.
@@ -208,7 +208,7 @@ impl Engine {
                 report.errors.join("\n  ")
             );
         }
-        let acl = crate::netacl::Acl::new(
+        let acl = crate::http::netacl::Acl::new(
             &file_config.network.allow_from,
             &file_config.network.trusted_proxies,
         )?;
