@@ -193,7 +193,7 @@ impl Engine {
             return Ok(self.status_without_disk());
         }
         let (cands, used) = self.candidates()?;
-        let (disk_free, disk_total) = disk_usage(&self.torrents_dir)?;
+        let (disk_free, disk_total) = crate::health::disk_usage(&self.torrents_dir)?;
         let next_eviction = cands
             .iter()
             .filter(|c| !c.protected)
@@ -373,7 +373,7 @@ impl Engine {
         }
         self.catalog.recent_events(1)?;
         let _ = self.session.with_torrents(|it| it.count());
-        disk_usage(&self.torrents_dir)?;
+        crate::health::disk_usage(&self.torrents_dir)?;
         Ok(())
     }
 
@@ -386,7 +386,7 @@ impl Engine {
                 self.opts.data_dir.display()
             ));
         }
-        if let Ok((free, _)) = disk_usage(&self.torrents_dir)
+        if let Ok((free, _)) = crate::health::disk_usage(&self.torrents_dir)
             && free < self.opts.min_free
         {
             out.push(format!(

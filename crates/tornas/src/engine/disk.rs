@@ -2,22 +2,11 @@
 //! everything rather than letting downloads land on the boot medium, and the pause
 //! lifts itself when the disk comes back.
 
-use std::path::Path;
-
-use anyhow::Context;
 use tracing::{info, warn};
 
 use crate::units::now_secs;
 
 use super::*;
-
-pub fn disk_usage(path: &Path) -> anyhow::Result<(u64, u64)> {
-    let st = nix::sys::statvfs::statvfs(path).with_context(|| format!("statvfs {path:?}"))?;
-    let frag = st.fragment_size() as u64;
-    let free = st.blocks_available() as u64 * frag;
-    let total = st.blocks() as u64 * frag;
-    Ok((free, total))
-}
 
 impl Engine {
     pub fn is_disk_missing(&self) -> bool {

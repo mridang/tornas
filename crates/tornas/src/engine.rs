@@ -17,7 +17,6 @@ pub mod stall;
 pub mod trackers;
 pub mod views;
 
-pub use disk::disk_usage;
 pub use fault::{Fault, FaultKind, fault, fault_kind};
 pub use pause::{DiskAction, PauseReason, PauseState, PauseView, disk_action};
 pub use views::{AddMovieRequest, BudgetView, MovieView, SessionView, StatusView};

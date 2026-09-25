@@ -44,7 +44,7 @@ impl Engine {
     /// Evict until `incoming` more bytes fit under the budget and `min_free` stays free on disk.
     pub async fn ensure_space(&self, incoming: u64) -> anyhow::Result<Vec<Candidate>> {
         let (cands, used) = self.candidates()?;
-        let (disk_free, _) = disk_usage(&self.torrents_dir)?;
+        let (disk_free, _) = crate::health::disk_usage(&self.torrents_dir)?;
         // Bytes that must be freed on disk to keep min_free after the incoming torrent lands.
         let extra = (incoming + self.opts.min_free).saturating_sub(disk_free);
         let plan = budget::plan(&cands, used, incoming, self.opts.disk_budget, extra)

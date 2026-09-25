@@ -30,6 +30,15 @@ pub async fn run(opts: HealthOpts) -> anyhow::Result<()> {
 }
 
 /// True when `path` lives on a different filesystem than `/`, i.e. on a mounted disk.
+/// Free and total bytes on the filesystem holding `path`.
+pub fn disk_usage(path: &Path) -> anyhow::Result<(u64, u64)> {
+    let st = nix::sys::statvfs::statvfs(path).with_context(|| format!("statvfs {path:?}"))?;
+    let frag = st.fragment_size() as u64;
+    let free = st.blocks_available() as u64 * frag;
+    let total = st.blocks() as u64 * frag;
+    Ok((free, total))
+}
+
 pub fn is_on_separate_filesystem(path: &Path) -> anyhow::Result<bool> {
     use nix::sys::stat::stat;
     let root = stat("/").context("stat /")?;
@@ -125,7 +134,7 @@ pub fn check_mount(data_dir: &Path, require: bool) -> anyhow::Result<()> {
 }
 
 pub fn describe_disk(path: &Path) -> String {
-    match crate::engine::disk_usage(path) {
+    match disk_usage(path) {
         Ok((free, total)) => format!("{} free of {}", human_bytes(free), human_bytes(total)),
         Err(e) => format!("unknown ({e})"),
     }
