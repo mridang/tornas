@@ -1,15 +1,15 @@
 Package: tornas
-Version: 1.0.0-1
+Version: 1.1.0-1
 Architecture: arm64
 Maintainer: Mridang Agarwalla <mridang.agarwalla@gmail.com>
-Installed-Size: 9151
+Installed-Size: 9229
 Depends: ca-certificates
 Recommends: systemd
-Filename: pool/main/t/tornas/tornas_1.0.0-1_arm64.deb
-Size: 3585720
-MD5sum: 1c091a0842a8a622306e39b7f285148b
-SHA1: 96e21c6901101cb688f5901fba3032470b2f64d5
-SHA256: 6143ef88318c1742c9e2b5ada745c38947881a46f1555293e73b00874d9d68c1
+Filename: pool/main/t/tornas/tornas_1.1.0-1_arm64.deb
+Size: 3614392
+MD5sum: 570be61f9d6c3a16efb077ce84a7fe18
+SHA1: 411b61ab06d23ac8958fd6899ce20d8c21100e21
+SHA256: 4169a308ef342c543a61321ac73ae66fb8bc0c48337ecdaff94afa253becb296
 Section: video
 Priority: optional
 Homepage: https://github.com/mridang/tornas
