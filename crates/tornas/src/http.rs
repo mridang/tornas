@@ -300,7 +300,7 @@ async fn index() -> impl IntoResponse {
             (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
             (header::REFERRER_POLICY, "no-referrer"),
         ],
-        include_str!("ui.html"),
+        include_str!("http/ui.html"),
     )
 }
 
@@ -416,7 +416,7 @@ async fn api_root() -> impl IntoResponse {
 async fn openapi() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "application/json")],
-        include_str!("openapi.json"),
+        include_str!("http/openapi.json"),
     )
 }
 
