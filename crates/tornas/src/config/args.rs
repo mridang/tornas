@@ -17,24 +17,6 @@ pub struct Cli {
     #[arg(long, env = "TORNAS_LOG", default_value = "info", global = true)]
     pub log: String,
 
-    /// Console/file log format.
-    #[arg(
-        long,
-        env = "TORNAS_LOG_FORMAT",
-        default_value = "text",
-        value_enum,
-        global = true
-    )]
-    pub log_format: crate::logging::LogFormat,
-
-    /// Also write daily-rotated log files into this directory.
-    #[arg(long, env = "TORNAS_LOG_DIR", global = true)]
-    pub log_dir: Option<PathBuf>,
-
-    /// How many rotated log files to keep.
-    #[arg(long, env = "TORNAS_LOG_KEEP", default_value = "7", global = true)]
-    pub log_keep: usize,
-
     #[command(subcommand)]
     pub cmd: Command,
 }

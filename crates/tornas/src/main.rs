@@ -3,13 +3,7 @@ use tornas::config::{Cli, Command};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    // `config` commands validate and must have no side effects: no log directory
-    // is created, even when TORNAS_LOG_DIR is set.
-    let log_dir = match cli.cmd {
-        Command::Config(_) => None,
-        _ => cli.log_dir.as_deref(),
-    };
-    tornas::logging::init(&cli.log, cli.log_format, log_dir, cli.log_keep)?;
+    tornas::logging::init(&cli.log)?;
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

@@ -1,64 +1,31 @@
-//! Logging: console output, or daily-rotated files, in text or JSON.
+//! Logging. Under systemd the daemon logs to journald with structured fields;
+//! otherwise (interactive use, dev, non-systemd hosts) it logs to the console.
+//! Retention, rotation and remote shipping are journald's and the OTLP collector's
+//! job, not this process's.
 
-use std::{path::Path, sync::OnceLock};
+use anyhow::anyhow;
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
-
-static FILE_GUARD: OnceLock<tracing_appender::non_blocking::WorkerGuard> = OnceLock::new();
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub enum LogFormat {
-    Text,
-    Json,
-}
-
-/// Install the global subscriber. `file` enables daily-rotated files in that directory
-/// (kept alongside console output). Safe to call once.
-pub fn init(
-    filter: &str,
-    format: LogFormat,
-    file: Option<&Path>,
-    keep_files: usize,
-) -> anyhow::Result<()> {
+/// Install the global subscriber. `filter` is a `tracing` env-filter directive such
+/// as `info` or `tornas=debug,librqbit=info`. Safe to call once.
+pub fn init(filter: &str) -> anyhow::Result<()> {
     let env_filter = EnvFilter::try_new(filter).unwrap_or_else(|_| EnvFilter::new("info"));
     let registry = tracing_subscriber::registry().with(env_filter);
 
-    let console_json = matches!(format, LogFormat::Json);
-    let console = tracing_subscriber::fmt::layer().with_target(false);
-    let console: Box<dyn Layer<_> + Send + Sync> = if console_json {
-        Box::new(console.json().flatten_event(true))
-    } else {
-        Box::new(console)
-    };
-
-    let file_layer: Option<Box<dyn Layer<_> + Send + Sync>> = match file {
-        Some(dir) => {
-            std::fs::create_dir_all(dir)?;
-            let appender = tracing_appender::rolling::Builder::new()
-                .rotation(tracing_appender::rolling::Rotation::DAILY)
-                .filename_prefix("tornas")
-                .filename_suffix("log")
-                .max_log_files(keep_files.max(1))
-                .build(dir)?;
-            let (nb, guard) = tracing_appender::non_blocking(appender);
-            let _ = FILE_GUARD.set(guard);
-            let l = tracing_subscriber::fmt::layer()
-                .with_writer(nb)
-                .with_ansi(false)
-                .with_target(true);
-            Some(if console_json {
-                Box::new(l.json().flatten_event(true))
-            } else {
-                Box::new(l)
-            })
-        }
-        None => None,
-    };
+    // Prefer journald when systemd started us: it captures the structured fields and
+    // owns retention. Logging to stdout as well would double up, since systemd also
+    // captures stdout. Everywhere else, the console is what a person wants.
+    if crate::service::systemd::is_managed()
+        && let Ok(journald) = tracing_journald::layer()
+    {
+        return registry
+            .with(journald)
+            .try_init()
+            .map_err(|e| anyhow!("installing journald logger: {e}"));
+    }
 
     registry
-        .with(console)
-        .with(file_layer)
+        .with(tracing_subscriber::fmt::layer().with_target(false))
         .try_init()
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    Ok(())
+        .map_err(|e| anyhow!("installing console logger: {e}"))
 }

@@ -36,7 +36,7 @@ humantime = "2"
 rusqlite = { version = "0.40", features = ["bundled"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json", "registry"] }
-tracing-appender = "0.2"
+tracing-journald = "0.3"
 nix = { version = "0.30", features = ["fs"] }
 mime_guess = { version = "2", default-features = false }
 parking_lot = "0.12"
