@@ -20,7 +20,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     config::ServerOpts,
-    media_catalog::{Eviction, MediaCatalog, TorrentRow, eviction::Lru},
+    media_catalog::{MediaCatalog, TorrentRow},
     tmdb::Tmdb,
     trackers::TrackerFeed,
     tuning::{IpListStatus, PeerList},
@@ -73,19 +73,13 @@ impl Engine {
         if tmdb.is_none() {
             warn!("no TMDB credentials: movies will be catalogued by IMDb id only");
         }
-        let library = Arc::new(
-            MediaCatalog::builder(data_dir.join("catalog.db"))
-                .metadata(tmdb)
-                .eviction(
-                    Eviction::builder()
-                        .budget(opts.disk_budget)
-                        .min_free(opts.min_free)
-                        .protect_streamed(opts.stream_grace)
-                        .strategy(Lru)
-                        .build(),
-                )
-                .build()?,
-        );
+        let library = Arc::new(MediaCatalog::new(
+            data_dir.join("catalog.db"),
+            tmdb,
+            opts.disk_budget,
+            opts.min_free,
+            opts.stream_grace,
+        )?);
 
         let listen_port = opts.listen_port.unwrap_or(0);
         let listen_addr: SocketAddr = if ipv6 {

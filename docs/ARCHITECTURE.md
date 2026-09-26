@@ -117,29 +117,18 @@ to serve exactly one implementation.
 
 ## The media library and eviction
 
-`media_catalog/` is the library facade. `MediaCatalog` owns three things — the
-SQLite `store`, the disk-`eviction` policy, and the TMDB client — and is built
-through a fluent builder so the whole subsystem is configured in one place:
+`media_catalog/` is the library. `MediaCatalog::new(db_path, tmdb, budget,
+min_free, stream_grace)` owns the SQLite `store`, the TMDB client, and the
+disk-budget settings.
 
-```rust
-MediaCatalog::builder(db_path)
-    .metadata(tmdb)
-    .eviction(Eviction::builder()
-        .budget(budget).min_free(min_free).protect_streamed(grace)
-        .strategy(Lru)
-        .build())
-    .build()?
-```
-
-Eviction is split into **planning** and **execution**. `EvictionPolicy`
-(`eviction/policy.rs`) is a pure trait — given candidates and a `Need`, it returns
-a `Plan`; `Lru` in `eviction/policies.rs` is the only strategy today, but the trait
-is why adding another is a new struct, not a rewrite. Executing a plan (removing
-torrents from the librqbit session, then forgetting the rows) needs librqbit, so it
-stays in `engine/eviction.rs`. The engine holds one `Arc<MediaCatalog>`, asks it
-`candidates()` and `plan()`, and carries out the result. That keeps librqbit out of
-the library and the store pure enough for the DLNA adapter to read directly
-(`impl Browsable for MediaCatalog`).
+Eviction is split into **planning** and **execution**. `eviction::plan` is a plain
+function: given candidates and how much must be freed, it returns which torrents to
+drop, least-recently-used first, skipping anything streamed within the grace
+window. Executing the plan (removing torrents from the librqbit session, then
+forgetting the rows) needs librqbit, so it stays in `engine/eviction.rs`. The
+engine holds one `Arc<MediaCatalog>`, asks it `candidates()` and `plan()`, and
+carries out the result. That keeps librqbit out of the library and the store pure
+enough for the DLNA adapter to read directly (`impl Browsable for MediaCatalog`).
 
 ## `utils` holds two named leaves, not a grab-bag
 
