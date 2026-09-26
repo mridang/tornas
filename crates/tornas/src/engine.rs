@@ -28,18 +28,17 @@ use librqbit::{ManagedTorrent, dht::Id20};
 pub(crate) type ManagedTorrentHandle = Arc<ManagedTorrent>;
 
 use crate::{
-    catalog::Catalog,
     config::{FileConfig, ServerOpts},
-    tmdb::Tmdb,
+    media_catalog::MediaCatalog,
     trackers::TrackerFeed,
 };
 
 pub struct Engine {
     pub session: Arc<Session>,
-    /// Shared so other subsystems (DLNA, for one) can read the library without
-    /// holding the whole engine.
-    pub catalog: Arc<Catalog>,
-    pub tmdb: Option<Tmdb>,
+    /// The movie store, eviction policy and metadata client. Shared so other
+    /// subsystems (DLNA, for one) can read the library without holding the whole
+    /// engine.
+    pub library: Arc<MediaCatalog>,
     pub opts: ServerOpts,
     pub file_config: FileConfig,
     pub acl: crate::http::netacl::Acl,

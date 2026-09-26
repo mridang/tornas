@@ -41,7 +41,8 @@ impl Engine {
                     info!("download complete, paused seeding: {name}");
                     crate::metrics::seeding_paused();
                     let _ = engine
-                        .catalog
+                        .library
+                        .store()
                         .add_event("done", &format!("downloaded {name}, seeding paused"));
                 }
                 Err(e) => warn!("could not pause finished torrent: {e:#}"),
@@ -73,7 +74,7 @@ impl Engine {
             .max_active_downloads
             .map(|m| m as usize)
             .unwrap_or(usize::MAX);
-        let mut rows = self.catalog.list_torrents()?;
+        let mut rows = self.library.store().list_torrents()?;
         rows.sort_by_key(|r| (r.added_at, r.info_hash.clone()));
         let mut started = 0;
         let mut slot = 0;

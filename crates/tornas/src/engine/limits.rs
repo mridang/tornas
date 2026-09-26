@@ -8,7 +8,7 @@ use anyhow::Context;
 use librqbit::{AddTorrentResponse, api::TorrentIdOrHash};
 use tracing::{debug, warn};
 
-use crate::catalog::TorrentRow;
+use crate::media_catalog::TorrentRow;
 
 use super::*;
 
@@ -89,10 +89,12 @@ impl Engine {
         }
         let _guard = self.add_lock.lock().await;
         let row = self
-            .catalog
+            .library
+            .store()
             .torrent_for_movie(imdb_id)?
             .ok_or_else(|| fault(FaultKind::NotFound, "no such movie"))?;
-        self.catalog
+        self.library
+            .store()
             .set_limits(&row.info_hash, download, upload, peers)?;
         let row = TorrentRow {
             download_limit: download,
@@ -106,7 +108,7 @@ impl Engine {
             Some(v) => crate::utils::human_rate(u64::from(v)),
             None => "default".to_owned(),
         };
-        self.catalog.add_event(
+        self.library.store().add_event(
             "limits",
             &format!(
                 "{imdb_id}: download {}, upload {}, {}",

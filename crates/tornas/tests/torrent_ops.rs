@@ -116,7 +116,7 @@ async fn reload_keeps_piece_map_and_limits_apply() {
 
     // Negative control: removing and re-adding without keeping the piece map does
     // trigger a full check, so the assertion above really measures something.
-    let row = engine.catalog.torrent_for_movie(&id).unwrap().unwrap();
+    let row = engine.library.store().torrent_for_movie(&id).unwrap().unwrap();
     let h = engine
         .session
         .get(librqbit::api::TorrentIdOrHash::Hash(

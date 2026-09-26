@@ -8,7 +8,7 @@ use librqbit::{AddTorrent, AddTorrentOptions, AddTorrentResponse, api::TorrentId
 use tracing::info;
 
 use crate::{
-    catalog::{Movie, TorrentRow},
+    media_catalog::{Movie, TorrentRow},
     utils::{human_bytes, now_secs},
 };
 
@@ -35,16 +35,17 @@ impl Engine {
     }
 
     pub async fn remove_movie(&self, imdb_id: &str) -> anyhow::Result<bool> {
-        let Some(t) = self.catalog.torrent_for_movie(imdb_id)? else {
-            return self.catalog.delete_movie(imdb_id);
+        let Some(t) = self.library.store().torrent_for_movie(imdb_id)? else {
+            return self.library.store().delete_movie(imdb_id);
         };
         if let Some(h) = self.handle_for(&t.info_hash) {
             self.session
                 .delete(TorrentIdOrHash::Id(h.id()), true)
                 .await?;
         }
-        self.catalog.delete_movie(imdb_id)?;
-        self.catalog
+        self.library.store().delete_movie(imdb_id)?;
+        self.library
+            .store()
             .add_event("remove", &format!("removed {imdb_id}"))?;
         crate::metrics::removal();
         Ok(true)
@@ -106,7 +107,7 @@ impl Engine {
         {
             return Err(fault(FaultKind::Invalid, "magnet must be a magnet: link"));
         }
-        if let Some(existing) = self.catalog.torrent_for_movie(&imdb_id)? {
+        if let Some(existing) = self.library.store().torrent_for_movie(&imdb_id)? {
             if self.handle_for(&existing.info_hash).is_some() {
                 return Err(fault(
                     FaultKind::Conflict,
@@ -117,7 +118,7 @@ impl Engine {
 
         // 1. Metadata first so a bad id fails before we touch the network for peers.
         let now = now_secs();
-        let (movie, raw) = match &self.tmdb {
+        let (movie, raw) = match self.library.tmdb() {
             Some(t) => {
                 let m = t
                     .find_by_imdb(&imdb_id)
@@ -297,8 +298,8 @@ impl Engine {
         self.watch_completion(handle.clone());
 
         // 5. Record it.
-        self.catalog.upsert_movie(&movie, raw.as_deref())?;
-        self.catalog.insert_torrent(&TorrentRow {
+        self.library.store().upsert_movie(&movie, raw.as_deref())?;
+        self.library.store().insert_torrent(&TorrentRow {
             info_hash: info_hash.clone(),
             imdb_id: imdb_id.clone(),
             magnet: stored_source,
@@ -324,7 +325,7 @@ impl Engine {
             }
         );
         info!("{msg}");
-        self.catalog.add_event("add", &msg)?;
+        self.library.store().add_event("add", &msg)?;
         Ok(self.view_movie(movie, Some(handle)))
     }
 }

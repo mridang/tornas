@@ -41,7 +41,7 @@ impl Engine {
             return Ok(0);
         }
         let list = self.trackers.current();
-        let rows = self.catalog.list_torrents()?;
+        let rows = self.library.store().list_torrents()?;
         let mut n = 0;
         for row in rows {
             let Some(h) = self.handle_for(&row.info_hash) else {

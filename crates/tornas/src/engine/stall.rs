@@ -17,7 +17,7 @@ impl Engine {
         let now = now_secs();
         let mut stalled = Vec::new();
         {
-            let rows = self.catalog.list_torrents()?;
+            let rows = self.library.store().list_torrents()?;
             let mut seen = self.progress_seen.lock();
             seen.retain(|h, _| rows.iter().any(|r| &r.info_hash == h));
             for row in rows {
@@ -37,11 +37,12 @@ impl Engine {
                     continue;
                 }
                 let movie_last_used = self
-                    .catalog
+                    .library
+                    .store()
                     .get_movie(&row.imdb_id)?
                     .map(|m| m.last_used_at)
                     .unwrap_or(0);
-                if now - entry.1 >= timeout && !self.is_protected(movie_last_used) {
+                if now - entry.1 >= timeout && !self.library.is_protected(movie_last_used) {
                     stalled.push((row.info_hash.clone(), row.imdb_id.clone(), now - entry.1));
                 }
             }
@@ -52,7 +53,7 @@ impl Engine {
                 "evicting stalled download {imdb}: no progress for {}",
                 crate::utils::human_age(secs)
             );
-            self.catalog.add_event(
+            self.library.store().add_event(
                 "stalled",
                 &format!(
                     "{imdb} made no progress for {}, evicted",

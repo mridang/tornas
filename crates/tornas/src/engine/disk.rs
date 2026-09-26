@@ -55,7 +55,10 @@ impl Engine {
             .swap(!ok, std::sync::atomic::Ordering::SeqCst);
         if ok && was_missing {
             info!("the data disk is back");
-            let _ = self.catalog.add_event("disk", "the data disk came back");
+            let _ = self
+                .library
+                .store()
+                .add_event("disk", "the data disk came back");
         }
         let reason = self.pause.lock().as_ref().map(|p| p.reason);
         match disk_action(ok, reason) {
@@ -77,7 +80,8 @@ impl Engine {
             && crate::utils::mount::host_has_disk(&self.opts.data_dir)
         {
             let _ = self
-                .catalog
+                .library
+                .store()
                 .add_event("disk", "the data disk came back; restarting");
             crate::systemd::restart_me("the data disk is mounted again on the host");
         }

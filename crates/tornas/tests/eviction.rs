@@ -251,7 +251,7 @@ async fn pause_everything_then_auto_resume() {
     );
     let m = engine.get_movie(&fx[0].imdb_id).unwrap().unwrap();
     assert_eq!(m.state, "downloading", "should resume downloading");
-    let ev = engine.catalog.recent_events(5).unwrap();
+    let ev = engine.library.store().recent_events(5).unwrap();
     assert!(
         ev.iter()
             .any(|e| e.kind == "resume" && e.message.contains("auto"))

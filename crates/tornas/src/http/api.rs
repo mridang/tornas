@@ -174,7 +174,7 @@ pub(super) async fn api_config(State(e): State<AppState>) -> impl IntoResponse {
         "public_url": e.opts.public_url,
         "dlna": !e.opts.disable_dlna,
         "dht": !e.opts.disable_dht,
-        "tmdb": e.tmdb.is_some(),
+        "tmdb": e.library.tmdb().is_some(),
         "bandwidth": e.file_config.bandwidth,
         "ratelimit_download": e.opts.ratelimit_download,
         "ratelimit_upload": e.opts.ratelimit_upload,
@@ -222,7 +222,7 @@ pub(super) async fn api_events(
     State(e): State<AppState>,
     axum::extract::Query(q): axum::extract::Query<EventsQuery>,
 ) -> ApiResult<impl IntoResponse> {
-    Ok(Json(e.catalog.recent_events(q.limit.min(500))?))
+    Ok(Json(e.library.store().recent_events(q.limit.min(500))?))
 }
 
 #[derive(Deserialize)]

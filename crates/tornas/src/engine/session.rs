@@ -19,8 +19,8 @@ use librqbit::{
 use tracing::{debug, info, warn};
 
 use crate::{
-    catalog::{Catalog, TorrentRow},
     config::ServerOpts,
+    media_catalog::{Eviction, MediaCatalog, TorrentRow, eviction::Lru},
     tmdb::Tmdb,
     trackers::TrackerFeed,
     tuning::{IpListStatus, PeerList},
@@ -65,7 +65,6 @@ impl Engine {
         }
         let trackers = TrackerFeed::new(file_config.trackers.clone(), data_dir);
         let ipv6 = file_config.network.ipv6;
-        let catalog = Arc::new(Catalog::open(&data_dir.join("catalog.db"))?);
         let tmdb = Tmdb::new(
             &opts.tmdb_base_url,
             opts.tmdb_token.clone(),
@@ -74,6 +73,19 @@ impl Engine {
         if tmdb.is_none() {
             warn!("no TMDB credentials: movies will be catalogued by IMDb id only");
         }
+        let library = Arc::new(
+            MediaCatalog::builder(data_dir.join("catalog.db"))
+                .metadata(tmdb)
+                .eviction(
+                    Eviction::builder()
+                        .budget(opts.disk_budget)
+                        .min_free(opts.min_free)
+                        .protect_streamed(opts.stream_grace)
+                        .strategy(Lru)
+                        .build(),
+                )
+                .build()?,
+        );
 
         let listen_port = opts.listen_port.unwrap_or(0);
         let listen_addr: SocketAddr = if ipv6 {
@@ -149,8 +161,7 @@ impl Engine {
         let file_config_bandwidth = file_config.bandwidth.clone();
         let engine = Arc::new(Self {
             session,
-            catalog,
-            tmdb,
+            library,
             opts,
             file_config,
             acl,
@@ -190,7 +201,10 @@ impl Engine {
                 info!("re-paused {n} torrents that restored unpaused");
             }
         }
-        engine.catalog.add_event("start", "server started")?;
+        engine
+            .library
+            .store()
+            .add_event("start", "server started")?;
         let handles: Vec<ManagedTorrentHandle> = engine
             .session
             .with_torrents(|it| it.map(|(_, h)| h.clone()).collect());
@@ -202,7 +216,7 @@ impl Engine {
 
     /// Make the session and the catalog agree after a restart.
     pub(super) async fn reconcile(&self) -> anyhow::Result<()> {
-        let known: Vec<TorrentRow> = self.catalog.list_torrents()?;
+        let known: Vec<TorrentRow> = self.library.store().list_torrents()?;
         let in_session: Vec<(String, usize)> = self
             .session
             .with_torrents(|it| it.map(|(id, h)| (hash_hex(h.info_hash()), id)).collect());

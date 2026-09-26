@@ -6,8 +6,7 @@ use std::net::SocketAddr;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    catalog::{Event, Movie, TorrentRow},
-    media_catalog::eviction::Candidate,
+    media_catalog::{Event, Movie, TorrentRow, eviction::Candidate},
     utils::{human_bytes, now_secs},
 };
 
@@ -93,7 +92,8 @@ impl Engine {
         imdb_id: &str,
     ) -> anyhow::Result<(ManagedTorrentHandle, usize, String)> {
         let t = self
-            .catalog
+            .library
+            .store()
             .torrent_for_movie(imdb_id)?
             .ok_or_else(|| fault(FaultKind::NotFound, "no such movie"))?;
         let h = self.handle_for(&t.info_hash).ok_or_else(|| {
@@ -102,20 +102,22 @@ impl Engine {
                 "the torrent is not loaded (the data disk may be missing)",
             )
         })?;
-        self.catalog.touch(imdb_id, now_secs())?;
+        self.library.store().touch(imdb_id, now_secs())?;
         Ok((h, t.video_file_idx, t.video_file_name))
     }
 
     pub fn touch(&self, imdb_id: &str) {
-        let _ = self.catalog.touch(imdb_id, now_secs());
+        let _ = self.library.store().touch(imdb_id, now_secs());
     }
 
     /// Set a movie's last-used time explicitly; `None` means now.
     pub fn set_last_used(&self, imdb_id: &str, ts: Option<i64>) -> anyhow::Result<MovieView> {
-        if self.catalog.get_movie(imdb_id)?.is_none() {
+        if self.library.store().get_movie(imdb_id)?.is_none() {
             return Err(fault(FaultKind::NotFound, "no such movie"));
         }
-        self.catalog.touch(imdb_id, ts.unwrap_or_else(now_secs))?;
+        self.library
+            .store()
+            .touch(imdb_id, ts.unwrap_or_else(now_secs))?;
         self.get_movie(imdb_id)?
             .ok_or_else(|| fault(FaultKind::NotFound, "no such movie"))
     }
@@ -126,13 +128,14 @@ impl Engine {
         handle: Option<ManagedTorrentHandle>,
     ) -> MovieView {
         let torrent = self
-            .catalog
+            .library
+            .store()
             .torrent_for_movie(&movie.imdb_id)
             .ok()
             .flatten();
         let handle =
             handle.or_else(|| torrent.as_ref().and_then(|t| self.handle_for(&t.info_hash)));
-        let protected = self.is_protected(movie.last_used_at);
+        let protected = self.library.is_protected(movie.last_used_at);
         match handle {
             Some(h) => {
                 let stats = h.stats();
@@ -174,7 +177,8 @@ impl Engine {
 
     pub fn list_movies(&self) -> anyhow::Result<Vec<MovieView>> {
         Ok(self
-            .catalog
+            .library
+            .store()
             .list_movies()?
             .into_iter()
             .map(|m| self.view_movie(m, None))
@@ -183,7 +187,8 @@ impl Engine {
 
     pub fn get_movie(&self, imdb_id: &str) -> anyhow::Result<Option<MovieView>> {
         Ok(self
-            .catalog
+            .library
+            .store()
             .get_movie(imdb_id)?
             .map(|m| self.view_movie(m, None)))
     }
@@ -192,7 +197,7 @@ impl Engine {
         if self.is_disk_missing() {
             return Ok(self.status_without_disk());
         }
-        let (cands, used) = self.candidates()?;
+        let (cands, used) = self.library.candidates()?;
         let (disk_free, disk_total) = crate::utils::mount::disk_usage(&self.torrents_dir)?;
         let next_eviction = cands
             .iter()
@@ -206,9 +211,9 @@ impl Engine {
             pause: self.pause_view(),
             warnings: self.warnings(),
             budget: BudgetView {
-                limit: self.opts.disk_budget,
+                limit: self.library.budget(),
                 used,
-                min_free: self.opts.min_free,
+                min_free: self.library.min_free(),
                 disk_free,
                 disk_total,
                 next_eviction,
@@ -226,7 +231,7 @@ impl Engine {
                 listen_addr: self.session.listen_addr(),
             },
             movies: self.list_movies()?,
-            events: self.catalog.recent_events(20)?,
+            events: self.library.store().recent_events(20)?,
         })
     }
 
@@ -240,9 +245,9 @@ impl Engine {
             hostname: gethostname::gethostname().to_string_lossy().into_owned(),
             warnings: self.warnings(),
             budget: BudgetView {
-                limit: self.opts.disk_budget,
+                limit: self.library.budget(),
                 used: 0,
-                min_free: self.opts.min_free,
+                min_free: self.library.min_free(),
                 disk_free: 0,
                 disk_total: 0,
                 next_eviction: None,
@@ -268,9 +273,9 @@ impl Engine {
     /// loaded torrent.
     pub fn torrent_facts(&self) -> anyhow::Result<Vec<TorrentFacts>> {
         let now = now_secs();
-        let movies = self.catalog.list_movies()?;
+        let movies = self.library.store().list_movies()?;
         let mut out = Vec::new();
-        for row in self.catalog.list_torrents()? {
+        for row in self.library.store().list_torrents()? {
             let Some(h) = self.handle_for(&row.info_hash) else {
                 continue;
             };
@@ -371,7 +376,7 @@ impl Engine {
             let _ = self.session.with_torrents(|it| it.count());
             return Ok(());
         }
-        self.catalog.recent_events(1)?;
+        self.library.store().recent_events(1)?;
         let _ = self.session.with_torrents(|it| it.count());
         crate::utils::mount::disk_usage(&self.torrents_dir)?;
         Ok(())
@@ -387,24 +392,24 @@ impl Engine {
             ));
         }
         if let Ok((free, _)) = crate::utils::mount::disk_usage(&self.torrents_dir)
-            && free < self.opts.min_free
+            && free < self.library.min_free()
         {
             out.push(format!(
                 "only {} free on disk, below the configured minimum of {}: new movies will be refused until space is reclaimed",
                 human_bytes(free),
-                human_bytes(self.opts.min_free)
+                human_bytes(self.library.min_free())
             ));
         }
-        if let Ok((_, used)) = self.candidates()
-            && used > self.opts.disk_budget
+        if let Ok((_, used)) = self.library.candidates()
+            && used > self.library.budget()
         {
             out.push(format!(
                 "usage ({}) exceeds the budget ({}); the next sweep will evict",
                 human_bytes(used),
-                human_bytes(self.opts.disk_budget)
+                human_bytes(self.library.budget())
             ));
         }
-        if self.tmdb.is_none() {
+        if self.library.tmdb().is_none() {
             out.push(
                 "no TMDB credentials configured: movies are catalogued by IMDb id only".into(),
             );
