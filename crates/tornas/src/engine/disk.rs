@@ -20,10 +20,10 @@ impl Engine {
             return true;
         }
         matches!(
-            crate::health::is_on_separate_filesystem(&self.opts.data_dir),
+            crate::utils::mount::is_on_separate_filesystem(&self.opts.data_dir),
             Ok(true)
         ) && std::fs::read_dir(&self.torrents_dir).is_ok()
-            && crate::health::backing_device_present(&self.torrents_dir)
+            && crate::utils::mount::backing_device_present(&self.torrents_dir)
     }
 
     /// Pause for a missing disk: in memory only, never persisted, lifted when the
@@ -72,7 +72,9 @@ impl Engine {
         // Under systemd this process has a private mount namespace, so a disk that
         // is plugged back in never shows up here. When the host has it mounted
         // again, let systemd start a fresh process that sees it.
-        if !ok && crate::systemd::is_managed() && crate::health::host_has_disk(&self.opts.data_dir)
+        if !ok
+            && crate::systemd::is_managed()
+            && crate::utils::mount::host_has_disk(&self.opts.data_dir)
         {
             let _ = self
                 .catalog

@@ -24,7 +24,6 @@ pub mod config;
 pub mod dlna;
 pub mod engine;
 pub mod fixtures;
-pub mod health;
 pub mod http;
 pub mod logging;
 pub mod mdns;

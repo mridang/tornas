@@ -1,35 +1,17 @@
-//! `health` subcommand for scripts and container HEALTHCHECKs, plus the mount guard.
+//! Disk and mount-point checks behind the engine's disk guard.
+//!
+//! The interesting problem is Linux-and-systemd specific: when a USB disk is
+//! pulled, its mount stays alive (stale and empty) inside the service's private
+//! mount namespace, so naive writes land on the boot disk instead of failing. The
+//! detection here reads `/sys/dev/block` and `/proc/1/mountinfo`, neither of which
+//! exists off Linux — on macOS (dev builds) those reads simply report "present",
+//! which is the right answer since the failure mode cannot occur there. Free-space
+//! reporting works on any Unix.
 
-use std::{path::Path, time::Duration};
+use std::path::Path;
 
 use anyhow::{Context, bail};
 
-use crate::{config::HealthOpts, utils::human_bytes};
-
-/// Exit 0 when the server answers and its own probe passes; 1 otherwise.
-/// Prints one line either way.
-pub async fn run(opts: HealthOpts) -> anyhow::Result<()> {
-    let url = format!("{}/healthz", opts.server.trim_end_matches('/'));
-    let client = reqwest::Client::builder().timeout(opts.timeout).build()?;
-    let resp = match client.get(&url).send().await {
-        Ok(r) => r,
-        Err(e) => {
-            crate::outln!("UNHEALTHY {url}: {e}");
-            std::process::exit(1);
-        }
-    };
-    let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
-    if status.is_success() {
-        crate::outln!("OK {body}");
-        Ok(())
-    } else {
-        crate::outln!("UNHEALTHY {status} {body}");
-        std::process::exit(1);
-    }
-}
-
-/// True when `path` lives on a different filesystem than `/`, i.e. on a mounted disk.
 /// Free and total bytes on the filesystem holding `path`.
 pub fn disk_usage(path: &Path) -> anyhow::Result<(u64, u64)> {
     let st = nix::sys::statvfs::statvfs(path).with_context(|| format!("statvfs {path:?}"))?;
@@ -39,6 +21,7 @@ pub fn disk_usage(path: &Path) -> anyhow::Result<(u64, u64)> {
     Ok((free, total))
 }
 
+/// True when `path` lives on a different filesystem than `/`, i.e. on a mounted disk.
 pub fn is_on_separate_filesystem(path: &Path) -> anyhow::Result<bool> {
     use nix::sys::stat::stat;
     let root = stat("/").context("stat /")?;
@@ -135,12 +118,14 @@ pub fn check_mount(data_dir: &Path, require: bool) -> anyhow::Result<()> {
 
 pub fn describe_disk(path: &Path) -> String {
     match disk_usage(path) {
-        Ok((free, total)) => format!("{} free of {}", human_bytes(free), human_bytes(total)),
+        Ok((free, total)) => format!(
+            "{} free of {}",
+            super::human_bytes(free),
+            super::human_bytes(total)
+        ),
         Err(e) => format!("unknown ({e})"),
     }
 }
-
-pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
 mod tests {

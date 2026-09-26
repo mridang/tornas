@@ -32,7 +32,7 @@ impl Engine {
     pub async fn start(opts: ServerOpts) -> anyhow::Result<Arc<Self>> {
         let data_dir = &opts.data_dir;
         std::fs::create_dir_all(data_dir).with_context(|| format!("creating {data_dir:?}"))?;
-        crate::health::check_mount(data_dir, opts.require_mount)?;
+        crate::utils::mount::check_mount(data_dir, opts.require_mount)?;
         let torrents_dir = data_dir.join("torrents");
         let session_dir = data_dir.join("session");
         std::fs::create_dir_all(&torrents_dir)

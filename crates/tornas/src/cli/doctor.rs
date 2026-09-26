@@ -102,9 +102,9 @@ pub fn run(opts: DoctorOpts) -> anyhow::Result<()> {
         crate::outln!(
             "data dir:    {} ({})",
             dir.display(),
-            crate::health::describe_disk(dir)
+            crate::utils::mount::describe_disk(dir)
         );
-        match crate::health::is_on_separate_filesystem(dir) {
+        match crate::utils::mount::is_on_separate_filesystem(dir) {
             Ok(true) => {
                 crate::outln!("mount:       separate filesystem from / (safe for --require-mount)")
             }

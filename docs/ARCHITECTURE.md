@@ -8,10 +8,11 @@ layout: `src/foo.rs` holds the module, `src/foo/` holds its children.
 src/
   main.rs            binary entry: parse arguments, build telemetry + logging, dispatch
   lib.rs             module tree, the outln! macro, run_server
-  utils.rs           size parsing/formatting, rates, durations, now_secs
+  utils/             size: size parsing/formatting, rates, durations, now_secs
+                     mount: disk usage and mount-point checks (Linux disk guard)
 
   config.rs / config/  args (clap + TORNAS_* env), file (TOML), check (`config check`)
-  cli/               the terminal commands: status, top, pause, doctor (an API client)
+  cli/               the terminal commands: status, top, pause, doctor, health (an API client)
   engine/            the torrent engine; the only place that knows librqbit
   catalog.rs         sqlite store: movies, torrents, events
   http/              the JSON API, the dashboard, /video, middleware, the source ACL
@@ -25,7 +26,6 @@ src/
   telemetry.rs       OpenTelemetry providers (meter always, OTLP traces/logs when configured)
   metrics.rs         the instruments; /metrics scrape and OTLP push
   logging.rs         tracing subscriber: journald under systemd, console otherwise, + OTLP
-  health.rs          liveness probe, mount and block-device checks
   budget.rs          LRU eviction planner (pure)
   schedule.rs        weekly bandwidth windows (pure)
   trackers.rs        public tracker feed
@@ -81,7 +81,7 @@ main.rs → telemetry.rs, logging.rs → run_server (lib.rs, wiring)
   ├─→ http/ ────→ engine/ ─→ catalog, budget, schedule, trackers, tmdb, tuning
   ├─→ adapters/ ─→ engine/, catalog, and the three protocol modules
   ├─→ stremio/, dlna/, mdns.rs                                   (leaves: nothing from this crate)
-  ├─→ telemetry.rs, metrics.rs, logging.rs, health.rs
+  ├─→ telemetry.rs, metrics.rs, logging.rs, utils/mount.rs
   └─→ cli/                        (speaks HTTP to a running server, not the engine)
 ```
 
@@ -115,11 +115,21 @@ mean inventing a whole BitTorrent client interface — `ManagedTorrentHandle`,
 `TorrentStats`, `AddTorrentOptions`, `Session::ratelimits`, per-file selection —
 to serve exactly one implementation.
 
-## `utils` is small and named by intent
+## `utils` holds two named leaves, not a grab-bag
 
-`utils.rs` is a deliberately small module: size parsing (binary suffixes, because
-that is how disks report usage) and formatting, rate and age formatting, and
-`now_secs`. It is not a dumping ground — anything with a real home (a protocol
-module, the engine, config) keeps its helpers there. The self-contained protocol
-modules keep private copies of anything trivial rather than taking a dependency
-edge on `utils`.
+`utils/` is a folder of small, cross-cutting helpers, each file named for what it
+is rather than for being "misc":
+
+- `size` — size parsing (binary suffixes, because that is how disks report usage)
+  and byte/rate/age formatting, plus `now_secs`.
+- `mount` — disk free/total and the mount-point checks the engine's disk guard
+  relies on. The interesting part (detecting a stale mount left behind when a USB
+  disk is pulled from under a systemd service) is Linux-and-systemd specific and
+  reads `/sys/dev/block` and `/proc/1/mountinfo`; off Linux it compiles and reports
+  "present", which is correct because that failure mode cannot happen there.
+
+It is not a dumping ground: anything with a real home (a protocol module, the
+engine, config) keeps its helpers there, and the self-contained protocol modules
+keep private copies of anything trivial rather than taking a dependency edge on
+`utils`. The `tornas health` probe lives in `cli/`, with the other API-client
+commands, not here — it is a command, not a helper.
