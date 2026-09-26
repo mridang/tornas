@@ -311,6 +311,7 @@ impl Engine {
             download_limit: None,
             upload_limit: None,
             peer_limit: None,
+            completed_at: None,
         })?;
         let msg = format!(
             "added {} ({}) {}{}{}",

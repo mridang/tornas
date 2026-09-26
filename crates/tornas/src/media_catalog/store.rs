@@ -44,6 +44,9 @@ pub struct TorrentRow {
     pub upload_limit: Option<u32>,
     #[serde(default)]
     pub peer_limit: Option<u32>,
+    /// When the download finished, as unix seconds; `None` while still downloading.
+    #[serde(default)]
+    pub completed_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,7 +83,8 @@ CREATE TABLE IF NOT EXISTS torrents (
     size_bytes      INTEGER NOT NULL,
     video_file_idx  INTEGER NOT NULL,
     video_file_name TEXT NOT NULL,
-    added_at        INTEGER NOT NULL
+    added_at        INTEGER NOT NULL,
+    completed_at    INTEGER
 );
 CREATE INDEX IF NOT EXISTS torrents_imdb ON torrents(imdb_id);
 CREATE TABLE IF NOT EXISTS events (
@@ -113,6 +117,10 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
         (
             "peer_limit",
             "ALTER TABLE torrents ADD COLUMN peer_limit INTEGER",
+        ),
+        (
+            "completed_at",
+            "ALTER TABLE torrents ADD COLUMN completed_at INTEGER",
         ),
     ] {
         if !have.iter().any(|c| c == col) {
@@ -225,6 +233,7 @@ impl Catalog {
             download_limit: r.get("download_limit")?,
             upload_limit: r.get("upload_limit")?,
             peer_limit: r.get("peer_limit")?,
+            completed_at: r.get("completed_at")?,
         })
     }
 
@@ -288,6 +297,16 @@ impl Catalog {
                 Self::row_to_torrent,
             )
             .optional()?)
+    }
+
+    /// Mark a torrent's download complete (unix seconds). Set by the engine when a
+    /// download finishes; readers use it to show only fully-downloaded media.
+    pub fn mark_complete(&self, info_hash: &str, ts: i64) -> anyhow::Result<()> {
+        self.conn.lock().execute(
+            "UPDATE torrents SET completed_at = ?2 WHERE info_hash = ?1",
+            params![info_hash, ts],
+        )?;
+        Ok(())
     }
 
     pub fn delete_movie(&self, imdb_id: &str) -> anyhow::Result<bool> {
@@ -371,6 +390,7 @@ mod tests {
             download_limit: None,
             upload_limit: Some(1000),
             peer_limit: None,
+            completed_at: None,
         })
         .unwrap();
         assert_eq!(c.list_movies().unwrap().len(), 1);

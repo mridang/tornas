@@ -24,6 +24,16 @@ impl Engine {
                 warn!("waiting for completion: {e:#}");
                 return;
             }
+            // Record completion in the catalog so readers (DLNA, Stremio) can show
+            // only fully-downloaded media without asking the live session.
+            let info_hash = hash_hex(handle.info_hash());
+            if let Err(e) = engine
+                .library
+                .store()
+                .mark_complete(&info_hash, crate::utils::now_secs())
+            {
+                warn!("marking {info_hash} complete: {e:#}");
+            }
             // A finished download frees a queue slot for the next one.
             if engine.opts.keep_seeding || handle.is_paused() {
                 if let Err(e) = engine.balance_queue().await {
