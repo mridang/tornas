@@ -3,12 +3,18 @@ use tornas::config::{Cli, Command};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    tornas::logging::init(&cli.log)?;
-
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    rt.block_on(async move {
+
+    // The OTLP exporters build a tonic/hyper client that needs a runtime context,
+    // so this runs inside the runtime, before logging is installed on top of it.
+    let telemetry = rt.block_on(async {
+        tornas::telemetry::init(cli.otlp_endpoint.as_deref(), &cli.otel_service_name)
+    })?;
+    tornas::logging::init(&cli.log, &telemetry)?;
+
+    let result = rt.block_on(async move {
         match cli.cmd {
             Command::Server(opts) => tornas::run_server(opts).await,
             Command::Status(o) => tornas::cli::status(o).await,
@@ -29,5 +35,7 @@ fn main() -> anyhow::Result<()> {
             Command::Resume(o) => tornas::cli::resume(o).await,
             Command::Config(c) => tornas::config::check::run(c),
         }
-    })
+    });
+    rt.block_on(async { telemetry.shutdown() });
+    result
 }

@@ -32,6 +32,7 @@ pub mod metrics;
 pub mod schedule;
 pub mod service;
 pub mod stremio;
+pub mod telemetry;
 pub use service::systemd;
 pub mod server;
 pub mod tmdb;

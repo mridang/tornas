@@ -17,6 +17,20 @@ pub struct Cli {
     #[arg(long, env = "TORNAS_LOG", default_value = "info", global = true)]
     pub log: String,
 
+    /// OTLP/gRPC collector endpoint for traces, logs and metrics, e.g.
+    /// `http://localhost:4317`. Export is off unless this is set.
+    #[arg(long, env = "TORNAS_OTLP_ENDPOINT", global = true)]
+    pub otlp_endpoint: Option<String>,
+
+    /// `service.name` reported to the collector.
+    #[arg(
+        long,
+        env = "TORNAS_OTEL_SERVICE_NAME",
+        default_value = "tornas",
+        global = true
+    )]
+    pub otel_service_name: String,
+
     #[command(subcommand)]
     pub cmd: Command,
 }
