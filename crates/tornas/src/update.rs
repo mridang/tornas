@@ -196,14 +196,19 @@ impl Updater {
     /// Install a release already looked up by [`Updater::check`].
     pub async fn install_release(&self, found: &Available) -> anyhow::Result<Outcome> {
         let bytes = self.download_verified(&found.release).await?;
-        let target = match &self.install_path {
-            Some(p) => p.clone(),
-            None => std::env::current_exe().context("locating current executable")?,
+        let path = match &self.install_path {
+            // An explicit target (staging, tests): a plain atomic write.
+            Some(p) => {
+                write_executable(p, &bytes)?;
+                p.clone()
+            }
+            // The running binary: self-replace handles swapping an executable that is
+            // in use, on every platform. The caller re-execs to pick it up.
+            None => replace_running_exe(&bytes)?,
         };
-        install_atomically(&target, &bytes)?;
         Ok(Outcome::Installed {
             version: found.latest.clone(),
-            path: target,
+            path,
         })
     }
 
@@ -378,9 +383,26 @@ pub async fn run(opts: UpdateOpts) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Write next to the target and rename over it, so a crash mid-write never
-/// leaves a half binary in place.
-pub fn install_atomically(target: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+/// Replace the running executable with `bytes`. `self-replace` does the platform
+/// work of swapping a file that is currently executing; the caller re-execs to run
+/// the new code. Returns the path that was replaced.
+fn replace_running_exe(bytes: &[u8]) -> anyhow::Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let exe = std::env::current_exe().context("locating current executable")?;
+    // Stage next to the target so it lands on the same filesystem, with the exec bit
+    // set before it goes live.
+    let staging = exe.with_extension("new");
+    std::fs::write(&staging, bytes).with_context(|| format!("writing {staging:?}"))?;
+    std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755))?;
+    let result = self_replace::self_replace(&staging).context("replacing the running executable");
+    let _ = std::fs::remove_file(&staging);
+    result?;
+    Ok(exe)
+}
+
+/// Write `bytes` to `target` atomically (temp in the same dir, then rename), for an
+/// explicit `--install-path` that is not the running process.
+pub fn write_executable(target: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let dir = target.parent().context("target has no parent directory")?;
     let tmp: PathBuf = dir.join(format!(
@@ -425,7 +447,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("bin");
         std::fs::write(&target, b"old").unwrap();
-        install_atomically(&target, b"new").unwrap();
+        write_executable(&target, b"new").unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
         assert!(std::fs::read_dir(dir.path()).unwrap().count() == 1);
     }
