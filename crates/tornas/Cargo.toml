@@ -62,9 +62,6 @@ base64 = "0.22"
 humantime-serde = "1"
 mdns-sd = "0.21"
 sd-notify = "0.5"
-sha2 = "0.11"
-self-replace = "1"
-hex = "0.4"
 sha1w = { package = "librqbit-sha1-wrapper", git = "https://github.com/ikatson/rqbit", rev = "002a348", default-features = false, features = ["sha1-ring"] }
 
 [dev-dependencies]

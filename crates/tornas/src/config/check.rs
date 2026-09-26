@@ -417,9 +417,6 @@ pub fn check_env_text(text: &str) -> Report {
         )),
         Some(_) => {}
     }
-    if get("TORNAS_AUTO_UPDATE").is_some() && crate::update::apt_managed() {
-        r.warn("TORNAS_AUTO_UPDATE has no effect: this host was installed from a .deb, so apt handles updates");
-    }
     r
 }
 

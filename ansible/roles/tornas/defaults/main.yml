@@ -33,8 +33,6 @@ tornas_keep_seeding: false
 tornas_stream_grace: 15m
 tornas_stall_timeout: 6h
 tornas_pause_duration: 3h
-# Leave empty when Ansible or apt manages the version; the two would fight.
-tornas_auto_update: ""
 tornas_log_format: text
 tornas_log_dir: ""
 # Bytes per second; empty means unlimited.

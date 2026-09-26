@@ -34,11 +34,6 @@ pub async fn run_server(opts: ServerOpts) -> anyhow::Result<()> {
         .add(Systemd::with_probe({
             let e = engine.clone();
             move || e.probe()
-        }))
-        .add_opt(opts.auto_update.map(|interval| AutoUpdate {
-            engine: engine.clone(),
-            interval,
-            repo: opts.update_repo.clone(),
         }));
     svc.on_reload({
         let e = engine.clone();
@@ -171,26 +166,6 @@ impl Component for EngineWorkers {
         svc.spawn("bandwidth", e.clone().bandwidth_forever());
         svc.spawn("trackers", e.clone().tracker_refresh_forever());
         svc.spawn("status", status_loop(e));
-    }
-}
-
-/// The self-update checker, when an interval is configured.
-struct AutoUpdate {
-    engine: Arc<Engine>,
-    interval: Duration,
-    repo: String,
-}
-
-impl Component for AutoUpdate {
-    fn register(self: Box<Self>, svc: &mut Service) {
-        let AutoUpdate {
-            engine,
-            interval,
-            repo,
-        } = *self;
-        svc.task("auto-update", move |cancel| {
-            crate::update::auto_update_forever(engine, interval, repo, cancel)
-        });
     }
 }
 

@@ -19,7 +19,6 @@ Requires ansible-core 2.15 or newer on the controller and Python 3 on the hosts.
 ## Things worth knowing
 
 - **Changes need a restart, not a reload.** `systemctl reload tornas` only refreshes the tracker list. The handler restarts; state is flushed on stop, but streams in progress drop.
-- **One update mechanism.** With `apt` or `deb`, the daemon's self-update turns itself off and versions are yours to manage. With `binary`, leave `tornas_auto_update` empty if you pin versions here, or the two will fight.
 - **Each host gets its own mDNS name** (`tornas_mdns_name` defaults to the inventory hostname), so several boxes on one network do not rename each other.
 - **Secrets** go in Vault. The env file is written `0640 root:tornas` and the task hides its diff when tokens are set.
 - **`tornas_trackers_sources: []`** means no sources at all, not the built-in defaults.

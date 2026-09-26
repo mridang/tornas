@@ -29,7 +29,6 @@ fn main() -> anyhow::Result<()> {
             }
             Command::Seed(o) => tornas::fixtures::run_seed(o).await,
             Command::Health(o) => tornas::health::run(o).await,
-            Command::SelfUpdate(o) => tornas::update::run(o).await,
             Command::Doctor(o) => tornas::cli::doctor(o),
             Command::Pause(o) => tornas::cli::pause(o).await,
             Command::Resume(o) => tornas::cli::resume(o).await,

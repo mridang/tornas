@@ -38,7 +38,6 @@ pub mod server;
 pub mod tmdb;
 pub mod trackers;
 pub mod tuning;
-pub mod update;
 pub mod utils;
 
 pub use server::run_server;

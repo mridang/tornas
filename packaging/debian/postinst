@@ -11,8 +11,6 @@ if command -v systemd-tmpfiles >/dev/null 2>&1; then
 else
     mkdir -p /var/lib/tornas /etc/tornas && chown tornas:tornas /var/lib/tornas
 fi
-# Tell the daemon apt owns the binary, so in-process self-update stays off.
-touch /etc/tornas/apt-managed
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
     if [ "$1" = "configure" ] && [ -z "$2" ]; then

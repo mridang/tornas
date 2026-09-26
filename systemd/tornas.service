@@ -51,8 +51,6 @@ RestrictRealtime=true
 LockPersonality=true
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 ReadWritePaths=/var/lib/tornas
-# self-update replaces the binary in place (script installs); apt installs never self-update.
-ReadWritePaths=/usr/local/bin
 
 [Install]
 WantedBy=multi-user.target

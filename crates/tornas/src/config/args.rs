@@ -50,8 +50,6 @@ pub enum Command {
     Seed(SeedOpts),
     /// Probe a running server; exit 0 if healthy, 1 otherwise (for scripts and HEALTHCHECK).
     Health(HealthOpts),
-    /// Download the release binary for this architecture, verify its checksum and replace this executable.
-    SelfUpdate(UpdateOpts),
     /// Report CPU hashing capability, disk placement and environment; benchmark SHA-1.
     Doctor(DoctorOpts),
     /// Pause every torrent now. Resumes automatically after the configured
@@ -224,14 +222,6 @@ pub struct ServerOpts {
     #[arg(long, env = "TORNAS_API_TOKEN", hide_env_values = true)]
     pub api_token: Option<String>,
 
-    /// Check GitHub for a new release this often and install it in place, then
-    /// restart the process (works with and without systemd). Off when unset.
-    #[arg(long, env = "TORNAS_AUTO_UPDATE", value_parser = humantime::parse_duration)]
-    pub auto_update: Option<Duration>,
-    /// GitHub repository for auto-update.
-    #[arg(long, env = "TORNAS_UPDATE_REPO", default_value = "mridang/tornas")]
-    pub update_repo: String,
-
     /// Evict a download that has made no progress for this long (and is outside the
     /// stream grace window), so a dead torrent cannot hold budget forever.
     #[arg(long, env = "TORNAS_STALL_TIMEOUT", default_value = "6h", value_parser = humantime::parse_duration)]
@@ -368,33 +358,6 @@ pub struct HealthOpts {
     pub server: String,
     #[arg(long, default_value = "5s", value_parser = humantime::parse_duration)]
     pub timeout: Duration,
-}
-
-#[derive(Args, Debug, Clone)]
-pub struct UpdateOpts {
-    /// GitHub repository holding the releases.
-    #[arg(long, env = "TORNAS_UPDATE_REPO", default_value = "mridang/tornas")]
-    pub repo: String,
-    /// Install this exact version instead of the latest.
-    #[arg(long)]
-    pub version: Option<String>,
-    /// Only report whether an update exists (exit 10 if so).
-    #[arg(long)]
-    pub check: bool,
-    /// Reinstall even if the version is not newer.
-    #[arg(long)]
-    pub force: bool,
-    /// Install when the release has no .sha256 asset.
-    #[arg(long)]
-    pub allow_unverified: bool,
-    /// Where to write the binary. Defaults to the running executable.
-    #[arg(long)]
-    pub install_path: Option<PathBuf>,
-    /// Run `systemctl restart <service>` after installing.
-    #[arg(long)]
-    pub restart: bool,
-    #[arg(long, default_value = "tornas")]
-    pub service: String,
 }
 
 #[derive(Args, Debug, Clone)]

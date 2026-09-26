@@ -66,10 +66,6 @@ pub fn install() -> Option<&'static PrometheusHandle> {
         "Downloads that finished and were paused"
     );
     describe_counter!(
-        "tornas_updates_installed_total",
-        "Releases installed by auto-update"
-    );
-    describe_counter!(
         "tornas_stalled_evictions_total",
         "Downloads evicted after making no progress"
     );
@@ -111,7 +107,6 @@ pub fn install() -> Option<&'static PrometheusHandle> {
         "tornas_stream_bytes_total",
         "tornas_removals_total",
         "tornas_seeding_paused_total",
-        "tornas_updates_installed_total",
         "tornas_stalled_evictions_total",
         "tornas_unauthorized_total",
         "tornas_forbidden_source_total",
@@ -139,9 +134,6 @@ pub fn stream(kind: &'static str, bytes: u64) {
 }
 pub fn seeding_paused() {
     counter!("tornas_seeding_paused_total").increment(1);
-}
-pub fn update_installed() {
-    counter!("tornas_updates_installed_total").increment(1);
 }
 pub fn stalled_eviction() {
     counter!("tornas_stalled_evictions_total").increment(1);

@@ -25,7 +25,6 @@ src/
   metrics.rs         Prometheus
   logging.rs         tracing subscriber + the in-memory ring behind /api/logs
   health.rs          liveness probe, mount and block-device checks
-  update.rs          self-update
   budget.rs          LRU eviction planner (pure)
   schedule.rs        weekly bandwidth windows (pure)
   trackers.rs        public tracker feed
@@ -72,7 +71,7 @@ lib.rs (wiring)
   ├─→ http/ ────→ engine/ ─→ catalog, budget, schedule, trackers, tmdb, tuning
   ├─→ adapters/ ─→ engine/, catalog, and the three protocol modules
   ├─→ stremio/, dlna/, mdns.rs        (leaves: nothing from this crate)
-  ├─→ systemd.rs, metrics.rs, logging.rs, health.rs, update.rs
+  ├─→ systemd.rs, metrics.rs, logging.rs, health.rs
   └─→ cli/                            (speaks HTTP to a running server, not the engine)
 ```
 

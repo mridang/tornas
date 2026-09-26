@@ -23,7 +23,7 @@ sudo apt update && sudo apt install tornas
 sudo systemctl start tornas
 ```
 
-The package installs the binary, the systemd unit, the service user (sysusers.d), the directories (tmpfiles.d), `/etc/tornas/config.toml` and `/etc/tornas/tornas.env` as conffiles, and enables the unit. Upgrades come through `apt upgrade`; the daemon's in-process self-update turns itself off when it sees the package marker. The same `.deb` files are attached to each GitHub release for `apt install ./tornas_arm64.deb`.
+The package installs the binary, the systemd unit, the service user (sysusers.d), the directories (tmpfiles.d), `/etc/tornas/config.toml` and `/etc/tornas/tornas.env` as conffiles, and enables the unit. Upgrades come through `apt upgrade`. The same `.deb` files are attached to each GitHub release for `apt install ./tornas_arm64.deb`.
 
 ## Install anywhere else (static binary)
 
@@ -82,7 +82,6 @@ Three layers, later ones win: the TOML config file (found automatically as above
 | `--disable-mdns` | `TORNAS_MDNS_DISABLE` | | |
 | `--require-mount` | `TORNAS_REQUIRE_MOUNT` | off (on in the unit) | refuse to run on the root filesystem |
 | `--api-token` | `TORNAS_API_TOKEN` | | bearer token for API writes and logs |
-| `--auto-update` | `TORNAS_AUTO_UPDATE` | off | check and install releases on this interval |
 | `--stall-timeout` | `TORNAS_STALL_TIMEOUT` | `6h` | evict downloads with no progress for this long |
 | `--disable-dlna` | `TORNAS_DLNA_DISABLE` | | |
 | `--listen-port` | `RQBIT_LISTEN_PORT` | random | BitTorrent port |
@@ -205,7 +204,6 @@ tornas doctor          # CPU hashing support, disk placement, temperature
 * **Watchdog.** Under systemd the unit is `Type=notify` with `WatchdogSec=90`: the process pings systemd only while a liveness probe passes (the catalog answers, the torrent session is not wedged, the data directory is readable), so a hung server is restarted. `tornas health` runs the same probe from a script and exits 0/1; the Docker image uses it as its HEALTHCHECK; `/healthz` returns 503 when it fails. A full disk is deliberately *not* a probe failure, since killing a working daemon does not free space; it appears as a warning instead (`tornas status`, `/api/status`, and the `tornas_disk_below_min_free` metric).
 * **Mount guard.** `--require-mount` / `TORNAS_REQUIRE_MOUNT=true` (set in the shipped unit) refuses to start when the data dir is on the root filesystem, so a USB disk that failed to mount cannot fill the SD card. The unit also has `RequiresMountsFor=/var/lib/tornas` and waits for `network-online.target`.
 * **Disk pulled out.** With the mount guard on, the server also watches the disk while running. If the USB cable comes out (the disk's device disappears, or its directory becomes unreadable), everything pauses at once, the dashboard says why, and **Resume** is refused until the disk is back. When it is mounted again the pause lifts by itself; under systemd, where the service cannot see new mounts, the server restarts to pick the disk up. A manual pause is kept as it was. Metrics: `tornas_data_disk_mounted`, `tornas_paused_for_missing_disk`.
-* **Auto-update.** Set `TORNAS_AUTO_UPDATE=24h` (or `--auto-update`) and the server checks GitHub on that interval with a little jitter, downloads the release binary for its CPU, verifies the SHA-256 against the published checksum, swaps the executable atomically, flushes its state and re-executes itself in place. The PID and systemd notify socket survive, so it works under systemd, Docker and plain shells alike. For manual control use `sudo tornas self-update --restart`; `--check` exits 10 when an update exists and `--version` pins one.
 * **Stalled downloads.** A download with no progress for `--stall-timeout` (default 6h) that is outside the stream grace window is evicted, logged as a `stalled` event and counted in `tornas_stalled_evictions_total`, so a dead torrent never holds budget. Set `0s` to disable.
 * **API token.** `TORNAS_API_TOKEN=<secret>` protects every write under `/api` and the log endpoint with `Authorization: Bearer <secret>` (or `X-Api-Token`). Reads, the Stremio routes and video stay open so players keep working. Rejections count in `tornas_unauthorized_total`.
 * **Hashing.** Piece checks use aws-lc-rs, which selects the CPU's SHA-1 instructions at runtime (ARMv8 SHA extension on Pi 3/4/5 in 64-bit mode, SHA-NI on x86). `tornas doctor` shows the detected flags, benchmarks SHA-1 with the same code path the engine uses, and checks whether the data dir is on the SD card. ARMv7 CPUs and 32-bit OS builds have no SHA extension, which is one more reason to run 64-bit Pi OS.

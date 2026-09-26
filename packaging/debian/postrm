@@ -1,6 +1,5 @@
 #!/bin/sh
 set -e
-rm -f /etc/tornas/apt-managed
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true
 fi
