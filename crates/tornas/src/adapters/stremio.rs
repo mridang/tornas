@@ -13,7 +13,7 @@ use crate::{
         PosterShape, Reply, Stream, StreamBehaviorHints, StreamHandler, StreamRequest,
         StreamResponse, StreamSource, Video,
     },
-    units::human_bytes,
+    utils::human_bytes,
 };
 
 /// The id of the single catalogue this addon publishes.

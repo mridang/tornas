@@ -89,7 +89,7 @@ fn parse_limit(s: Option<&str>) -> anyhow::Result<Limit> {
     if s.eq_ignore_ascii_case("unlimited") {
         return Ok(Limit::Unlimited);
     }
-    let bytes = crate::units::parse_size(s)?;
+    let bytes = crate::utils::parse_size(s)?;
     let bps = u32::try_from(bytes).context("more than 4 GiB/s")?;
     let bps = NonZeroU32::new(bps).context("use \"unlimited\" rather than 0")?;
     Ok(Limit::Bps(bps))

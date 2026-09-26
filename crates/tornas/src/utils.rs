@@ -1,4 +1,4 @@
-//! Byte-size parsing and human formatting shared by the CLI and the status views.
+//! Small shared helpers: byte and rate formatting, size parsing, and clock time.
 
 use anyhow::{Context, bail};
 

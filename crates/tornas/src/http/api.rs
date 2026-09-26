@@ -300,7 +300,7 @@ pub(super) async fn api_patch(
                 .and_then(|v| u32::try_from(v).ok())
                 .map(Some)
                 .ok_or_else(|| invalid(format!("{key} must be between 1 and 4294967295 bytes/s"))),
-            serde_json::Value::String(s) => crate::units::parse_size(s)
+            serde_json::Value::String(s) => crate::utils::parse_size(s)
                 .ok()
                 .filter(|v| *v > 0)
                 .and_then(|v| u32::try_from(v).ok())

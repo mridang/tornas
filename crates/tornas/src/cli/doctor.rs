@@ -6,7 +6,7 @@ use std::{path::Path, time::Instant};
 
 use sha1w::ISha1;
 
-use crate::{config::DoctorOpts, units::human_bytes};
+use crate::{config::DoctorOpts, utils::human_bytes};
 
 /// CPU feature flags relevant to hashing, from /proc/cpuinfo on Linux.
 pub fn cpu_features() -> Vec<String> {

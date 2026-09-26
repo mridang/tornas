@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::Context;
 use serde::Deserialize;
 
-use crate::units::{human_age, human_bytes, human_rate, now_secs};
+use crate::utils::{human_age, human_bytes, human_rate, now_secs};
 
 /// A server to talk to. The base URL is validated once, here, rather than being
 /// trimmed and formatted at every call site.

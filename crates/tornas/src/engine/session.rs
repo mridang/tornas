@@ -182,7 +182,7 @@ impl Engine {
             match v.remaining_secs {
                 Some(r) => warn!(
                     "restored a pause from disk: everything stays paused for another {}",
-                    crate::units::human_age(r)
+                    crate::utils::human_age(r)
                 ),
                 None => warn!("restored a pause from disk: everything stays paused until resumed"),
             }

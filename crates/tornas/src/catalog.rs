@@ -310,7 +310,7 @@ impl Catalog {
         let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO events (ts, kind, message) VALUES (?1, ?2, ?3)",
-            params![crate::units::now_secs(), kind, message],
+            params![crate::utils::now_secs(), kind, message],
         )?;
         conn.execute(
             "DELETE FROM events WHERE id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 500)",

@@ -3,7 +3,7 @@
 
 use tracing::warn;
 
-use crate::units::now_secs;
+use crate::utils::now_secs;
 
 use super::*;
 
@@ -50,13 +50,13 @@ impl Engine {
         for (hash, imdb, secs) in stalled {
             warn!(
                 "evicting stalled download {imdb}: no progress for {}",
-                crate::units::human_age(secs)
+                crate::utils::human_age(secs)
             );
             self.catalog.add_event(
                 "stalled",
                 &format!(
                     "{imdb} made no progress for {}, evicted",
-                    crate::units::human_age(secs)
+                    crate::utils::human_age(secs)
                 ),
             )?;
             self.evict(&hash).await?;

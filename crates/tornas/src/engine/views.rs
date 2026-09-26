@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     budget::Candidate,
     catalog::{Event, Movie, TorrentRow},
-    units::{human_bytes, now_secs},
+    utils::{human_bytes, now_secs},
 };
 
 use super::*;

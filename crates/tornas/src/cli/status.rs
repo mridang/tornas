@@ -3,7 +3,7 @@
 use super::api::{Api, HEADERS, Status, movie_rows, pause_line};
 use crate::{
     config::ClientOpts,
-    units::{human_age, human_bytes, human_rate, now_secs},
+    utils::{human_age, human_bytes, human_rate, now_secs},
 };
 
 pub async fn status(opts: ClientOpts) -> anyhow::Result<()> {

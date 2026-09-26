@@ -4,7 +4,7 @@ use std::{path::Path, time::Duration};
 
 use anyhow::{Context, bail};
 
-use crate::{config::HealthOpts, units::human_bytes};
+use crate::{config::HealthOpts, utils::human_bytes};
 
 /// Exit 0 when the server answers and its own probe passes; 1 otherwise.
 /// Prints one line either way.

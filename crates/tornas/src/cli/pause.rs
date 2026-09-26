@@ -2,7 +2,7 @@
 
 use super::api::Api;
 use crate::config::{PauseOpts, ResumeOpts};
-use crate::units::human_age;
+use crate::utils::human_age;
 
 pub async fn pause(o: PauseOpts) -> anyhow::Result<()> {
     let body = serde_json::json!({

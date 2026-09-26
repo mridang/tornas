@@ -62,7 +62,7 @@ pub fn from_opts(opts: &ServerOpts) -> Tuning {
     if t.small_board {
         info!(
             "small board ({} of memory): using {} peers per torrent and {} simultaneous check(s) unless set explicitly",
-            crate::units::human_bytes(t.memory_bytes.unwrap_or(0)),
+            crate::utils::human_bytes(t.memory_bytes.unwrap_or(0)),
             t.peer_limit,
             t.concurrent_checks
         );
@@ -170,7 +170,7 @@ impl PeerList {
                     std::fs::rename(&tmp, cache)?;
                     info!(
                         "peer {kind}: downloaded {} from {shown}",
-                        crate::units::human_bytes(bytes.len() as u64)
+                        crate::utils::human_bytes(bytes.len() as u64)
                     );
                     st.loaded_from = Some(file_url(cache)?);
                 }
@@ -220,7 +220,7 @@ async fn download(url: &str) -> anyhow::Result<Vec<u8>> {
     if bytes.len() > MAX {
         bail!(
             "list is larger than {}",
-            crate::units::human_bytes(MAX as u64)
+            crate::utils::human_bytes(MAX as u64)
         );
     }
     Ok(bytes.to_vec())

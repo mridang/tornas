@@ -9,7 +9,7 @@ use tracing::{info, warn};
 
 use crate::{
     budget::{self, Candidate},
-    units::now_secs,
+    utils::now_secs,
 };
 
 use super::*;

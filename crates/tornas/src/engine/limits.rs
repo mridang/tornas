@@ -103,7 +103,7 @@ impl Engine {
         self.reload_torrent(&row).await?;
         let fmt = |v: Option<u32>, unit: &str| match v {
             Some(v) if unit == "peers" => format!("{v} peers"),
-            Some(v) => crate::units::human_rate(u64::from(v)),
+            Some(v) => crate::utils::human_rate(u64::from(v)),
             None => "default".to_owned(),
         };
         self.catalog.add_event(

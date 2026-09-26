@@ -75,11 +75,11 @@ pub struct ServerOpts {
     pub data_dir: PathBuf,
 
     /// Maximum bytes torrents may occupy, e.g. 800G. Oldest movies are evicted to stay under it.
-    #[arg(long, env = "TORNAS_DISK_BUDGET", value_parser = crate::units::parse_size)]
+    #[arg(long, env = "TORNAS_DISK_BUDGET", value_parser = crate::utils::parse_size)]
     pub disk_budget: u64,
 
     /// Never let the filesystem's free space drop below this, e.g. 20G.
-    #[arg(long, env = "TORNAS_MIN_FREE", default_value = "20G", value_parser = crate::units::parse_size)]
+    #[arg(long, env = "TORNAS_MIN_FREE", default_value = "20G", value_parser = crate::utils::parse_size)]
     pub min_free: u64,
 
     /// A movie streamed within this window is never evicted.
@@ -298,7 +298,7 @@ pub struct FixturesOpts {
     #[arg(long, default_value = "4")]
     pub count: usize,
     /// Size of each movie file, e.g. 30M. Ignored when ffmpeg renders real video.
-    #[arg(long, default_value = "30M", value_parser = crate::units::parse_size)]
+    #[arg(long, default_value = "30M", value_parser = crate::utils::parse_size)]
     pub size: u64,
     /// Seconds of video per movie when ffmpeg is available.
     #[arg(long, default_value = "20")]

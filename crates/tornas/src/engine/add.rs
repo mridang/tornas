@@ -9,7 +9,7 @@ use tracing::info;
 
 use crate::{
     catalog::{Movie, TorrentRow},
-    units::{human_bytes, now_secs},
+    utils::{human_bytes, now_secs},
 };
 
 use super::*;

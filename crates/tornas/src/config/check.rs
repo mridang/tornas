@@ -411,7 +411,7 @@ pub fn check_env_text(text: &str) -> Report {
     }
     match get("TORNAS_DISK_BUDGET") {
         None => r.warn("TORNAS_DISK_BUDGET is not set; the server will not start without it unless it is passed as a flag"),
-        Some(l) if crate::units::parse_size(&l.value).is_ok_and(|b| b == 0) => r.warn(format!(
+        Some(l) if crate::utils::parse_size(&l.value).is_ok_and(|b| b == 0) => r.warn(format!(
             "line {}: TORNAS_DISK_BUDGET is 0, so every movie would be refused",
             l.line
         )),

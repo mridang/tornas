@@ -13,7 +13,7 @@ use crate::{
     config::ServerOpts,
     engine::Engine,
     service::{Component, Service, systemd::Systemd},
-    units,
+    utils,
 };
 
 /// Start everything and run until a termination signal arrives. The runtime owns
@@ -204,17 +204,17 @@ async fn status_loop(engine: Arc<Engine>) {
             let downloading = st.movies.iter().filter(|m| !m.finished).count();
             let paused = match (st.pause.paused, st.pause.remaining_secs) {
                 (false, _) => String::new(),
-                (true, Some(r)) => format!("PAUSED, resumes in {}; ", units::human_age(r)),
+                (true, Some(r)) => format!("PAUSED, resumes in {}; ", utils::human_age(r)),
                 (true, None) => "PAUSED until resumed; ".to_owned(),
             };
             let line = format!(
                 "{paused}{} movies ({} downloading), {} / {} used, down {} up {}, {} peers",
                 st.movies.len(),
                 downloading,
-                units::human_bytes(st.budget.used),
-                units::human_bytes(st.budget.limit),
-                units::human_rate(st.session.download_bps),
-                units::human_rate(st.session.upload_bps),
+                utils::human_bytes(st.budget.used),
+                utils::human_bytes(st.budget.limit),
+                utils::human_rate(st.session.download_bps),
+                utils::human_rate(st.session.upload_bps),
                 st.session.peers_live
             );
             crate::systemd::status(&line);

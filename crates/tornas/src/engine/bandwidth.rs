@@ -30,7 +30,7 @@ impl Engine {
         let prev = std::mem::replace(&mut *self.bandwidth_active.lock(), idx);
         if prev != idx || changed {
             let show = |b: Option<NonZeroU32>| {
-                b.map(|b| crate::units::human_rate(u64::from(b.get())))
+                b.map(|b| crate::utils::human_rate(u64::from(b.get())))
                     .unwrap_or_else(|| "unlimited".into())
             };
             let which = idx

@@ -854,7 +854,7 @@ pub fn render(engine: &Engine) -> anyhow::Result<String> {
             &mut out,
             "tornas_tracker_list_age_seconds",
             "Seconds since the tracker list was last refreshed successfully",
-            crate::units::now_secs() - ts,
+            crate::utils::now_secs() - ts,
         );
     }
     gauge(
