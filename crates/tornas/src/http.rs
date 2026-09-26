@@ -122,18 +122,14 @@ where
     }
 }
 
-pub fn router(engine: AppState, upnp: Option<Router>) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any)
-        .expose_headers(Any);
-
-    let r = Router::new()
+/// This crate's own routes, with their shared engine state applied: the dashboard,
+/// the JSON API and the video endpoint. The Stremio addon and the UPnP router bring
+/// their own state and are merged separately.
+pub fn routes(engine: AppState) -> Router {
+    Router::new()
         .route("/", get(index))
         .route("/healthz", get(healthz))
         .route("/metrics", get(prometheus))
-        // JSON API
         .route("/api", get(api_root))
         .route("/api/openapi.json", get(openapi))
         .route("/api/status", get(api_status))
@@ -157,47 +153,47 @@ pub fn router(engine: AppState, upnp: Option<Router>) -> Router {
             "/api/movies/{imdb_id}",
             get(api_get).patch(api_patch).delete(api_delete),
         )
-        // Video bytes, shared by Stremio and DLNA
+        // Video bytes, shared by Stremio and DLNA.
         .route("/video/{imdb_id}/{filename}", get(video))
-        .route("/video/{imdb_id}", get(video));
-    // The Stremio addon brings its own routes and its own state, so it is merged
-    // after this router's state is applied. Merging at the root keeps the URLs
-    // people already have installed working. Its manifest is static, so a build
-    // error is a programming mistake rather than a runtime condition.
-    let addon = crate::adapters::stremio::addon(engine.clone()).expect("valid addon manifest");
-    let stremio = crate::stremio::router_with(
-        addon,
-        crate::stremio::RouterOptions {
-            // tornas serves its own dashboard at `/`, and applies its own CORS and
-            // source-address checks to every route, these included.
-            landing: false,
-            fallback: false,
-            config_mode: crate::stremio::ConfigMode::Disabled,
-            public_url: engine.opts.public_url.clone(),
-        },
-    );
+        .route("/video/{imdb_id}", get(video))
+        .with_state(engine)
+}
 
-    let engine_for_acl = engine.clone();
-    let mut r = r
-        .layer(axum::middleware::from_fn_with_state(
+/// Wrap a merged router in the shared middleware, outermost-last so the
+/// source-address check fronts everything and an outside client gets nothing but a
+/// 403. The token layer self-selects `/api` writes by path, so applying it to the
+/// whole router is the same as protecting only the endpoints that need it.
+pub fn shared(engine: AppState) -> impl FnOnce(Router) -> Router {
+    move |app| {
+        let cors = CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+            .expose_headers(Any);
+        // Inside the source-address check (refused requests have their own counter)
+        // and after routing (so the route template is known): token, then timing,
+        // then CORS, then the private-network preflight, then the ACL outermost.
+        app.layer(axum::middleware::from_fn_with_state(
             engine.clone(),
             require_token,
         ))
-        .with_state(engine)
-        .merge(stremio);
-    if let Some(u) = upnp {
-        r = r.nest("/upnp", u);
-    }
-    // Inside the source-address check, so refused requests are not counted here
-    // (they have their own counter), and after routing so the route template is known.
-    let r = r.layer(axum::middleware::from_fn(crate::metrics::track_http));
-    // Outermost last: the source-address check wraps everything, so a client from
-    // outside the allowed ranges gets nothing but 403. Inside it, the
-    // private-network middleware wraps CORS to decorate its preflight response.
-    r.layer(cors)
+        .layer(axum::middleware::from_fn(crate::metrics::track_http))
+        .layer(cors)
         .layer(axum::middleware::from_fn(allow_private_network))
         .layer(axum::middleware::from_fn_with_state(
-            engine_for_acl,
+            engine,
             require_allowed_source,
         ))
+    }
+}
+
+/// The whole HTTP app in one call: this crate's routes, the Stremio addon, and
+/// optionally the UPnP router, behind the shared middleware. The addon is merged at
+/// the root so URLs people already installed keep working.
+pub fn router(engine: AppState, upnp: Option<Router>) -> Router {
+    let mut app = routes(engine.clone()).merge(crate::adapters::stremio::router(engine.clone()));
+    if let Some(u) = upnp {
+        app = app.merge(Router::new().nest("/upnp", u));
+    }
+    shared(engine)(app)
 }

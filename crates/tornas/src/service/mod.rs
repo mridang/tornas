@@ -19,7 +19,7 @@ use axum::Router;
 use futures::future::BoxFuture;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 pub mod systemd;
 
@@ -193,7 +193,7 @@ impl Service {
             let task_name = t.name;
             set.spawn(async move {
                 run(child).await;
-                info!("task {task_name:?} stopped");
+                debug!("task {task_name:?} ended");
             });
         }
 

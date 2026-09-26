@@ -45,8 +45,9 @@ jobs:
           cd crates/tornas/src
           # Self-references (crate::stremio::… from inside stremio) are fine; a
           # reference to any other module is not.
-          if grep -rn 'crate::' stremio stremio.rs dlna dlna.rs mdns.rs \
-              | grep -v 'crate::stremio::' | grep -v 'crate::dlna::'; then
-            echo "::error::stremio, dlna and mdns must not import from this crate"
+          if grep -rn 'crate::' stremio stremio.rs dlna dlna.rs mdns.rs service \
+              | grep -v 'crate::stremio::' | grep -v 'crate::dlna::' \
+              | grep -v 'crate::service::'; then
+            echo "::error::stremio, dlna, mdns and service must not import from this crate"
             exit 1
           fi

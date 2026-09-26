@@ -23,6 +23,24 @@ pub const CATALOG_ID: &str = "local";
 /// the engine.
 pub type TornasAddon = crate::stremio::Addon<Arc<Engine>, Arc<Engine>, Arc<Engine>>;
 
+/// The Stremio addon as an axum router, ready to merge at the root. Panics only on
+/// a malformed manifest, which is a programming error, not a runtime condition.
+pub fn router(engine: Arc<Engine>) -> axum::Router {
+    let public_url = engine.opts.public_url.clone();
+    let addon = addon(engine).expect("valid addon manifest");
+    crate::stremio::router_with(
+        addon,
+        crate::stremio::RouterOptions {
+            // tornas serves its own dashboard at `/` and applies its own CORS and
+            // source-address checks to every route, these included.
+            landing: false,
+            fallback: false,
+            config_mode: crate::stremio::ConfigMode::Disabled,
+            public_url,
+        },
+    )
+}
+
 /// Assemble the addon. The manifest follows from the handlers registered here.
 pub fn addon(engine: Arc<Engine>) -> Result<TornasAddon, BuildError> {
     let name = engine
