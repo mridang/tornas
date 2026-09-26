@@ -98,3 +98,42 @@ where
         }
     }
 }
+
+/// The systemd integration as a [`Service`](super::Service) component: announce
+/// READY once the service is up, ping the watchdog while a probe passes, and send
+/// STOPPING on the way out. Adds nothing when the process was not started by
+/// systemd. Any Linux daemon can use it.
+pub struct Systemd<P> {
+    probe: Option<P>,
+}
+
+impl Systemd<fn() -> anyhow::Result<()>> {
+    /// systemd notifications without a watchdog.
+    pub fn notifications() -> Self {
+        Self { probe: None }
+    }
+}
+
+impl<P> Systemd<P>
+where
+    P: Fn() -> anyhow::Result<()> + Send + Sync + Clone + 'static,
+{
+    /// systemd notifications plus a watchdog driven by `probe`: the process only
+    /// pings while the probe passes, so a hung service is restarted.
+    pub fn with_probe(probe: P) -> Self {
+        Self { probe: Some(probe) }
+    }
+}
+
+impl<P> super::Component for Systemd<P>
+where
+    P: Fn() -> anyhow::Result<()> + Send + Sync + Clone + 'static,
+{
+    fn register(self: Box<Self>, svc: &mut super::Service) {
+        svc.on_ready(ready);
+        if let Some(probe) = self.probe {
+            svc.spawn("systemd-watchdog", watch(probe));
+        }
+        svc.on_shutdown(|| async { stopping() });
+    }
+}
