@@ -190,7 +190,15 @@ pub fn shared(engine: AppState) -> impl FnOnce(Router) -> Router {
 /// optionally the UPnP router, behind the shared middleware. The addon is merged at
 /// the root so URLs people already installed keep working.
 pub fn router(engine: AppState, upnp: Option<Router>) -> Router {
-    let mut app = routes(engine.clone()).merge(crate::adapters::stremio::router(engine.clone()));
+    let mut app = routes(engine.clone()).merge(crate::adapters::stremio::router(
+        engine.library.clone(),
+        engine
+            .opts
+            .addon_name
+            .clone()
+            .unwrap_or_else(|| "Tornas".to_owned()),
+        engine.opts.public_url.clone(),
+    ));
     if let Some(u) = upnp {
         app = app.merge(Router::new().nest("/upnp", u));
     }

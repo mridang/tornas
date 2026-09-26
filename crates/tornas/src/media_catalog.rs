@@ -110,3 +110,91 @@ impl MediaCatalog {
         eviction::plan(candidates, used, incoming, self.budget, extra)
     }
 }
+
+/// One piece of playable media, as plain data — everything a playback protocol
+/// (DLNA, Stremio, and later others) could want, with no live download state.
+#[derive(Debug, Clone)]
+pub struct MediaEntry {
+    pub id: String,
+    pub title: String,
+    pub year: Option<i32>,
+    pub poster: Option<String>,
+    pub backdrop: Option<String>,
+    pub genres: Vec<String>,
+    pub rating: Option<f64>,
+    pub overview: Option<String>,
+    pub runtime_min: Option<i64>,
+    pub file_name: String,
+    pub file_size: u64,
+}
+
+impl MediaEntry {
+    fn new(m: &Movie, t: &TorrentRow) -> Self {
+        Self {
+            id: m.imdb_id.clone(),
+            title: m.title.clone(),
+            year: m.year,
+            poster: m.poster_url.clone(),
+            backdrop: m.backdrop_url.clone(),
+            genres: m.genres.clone(),
+            rating: m.rating,
+            overview: m.overview.clone(),
+            runtime_min: m.runtime_min,
+            file_name: t.video_file_name.clone(),
+            file_size: t.size_bytes,
+        }
+    }
+
+    /// `Title (Year)`, or just the title when the year is unknown.
+    pub fn display_title(&self) -> String {
+        match self.year {
+            Some(y) => format!("{} ({y})", self.title),
+            None => self.title.clone(),
+        }
+    }
+
+    /// The server-relative URL that streams this file, e.g. `/video/tt0111161/x.mp4`.
+    pub fn video_path(&self) -> String {
+        let file = url::form_urlencoded::byte_serialize(self.file_name.as_bytes())
+            .collect::<String>()
+            .replace('+', "%20");
+        format!("/video/{}/{file}", self.id)
+    }
+}
+
+/// The read model every playback protocol is built on: the completed media in the
+/// library, as plain data. Each protocol adapter takes one of these and maps
+/// [`MediaEntry`] to its own wire format — none of them touch the engine.
+pub trait Library: Send + Sync {
+    /// All fully-downloaded media, sorted by title.
+    fn entries(&self) -> Vec<MediaEntry>;
+    /// One fully-downloaded movie by IMDb id, or `None` if it is absent or still
+    /// downloading.
+    fn entry(&self, id: &str) -> Option<MediaEntry>;
+}
+
+impl Library for MediaCatalog {
+    fn entries(&self) -> Vec<MediaEntry> {
+        let movies = self.store.list_movies().unwrap_or_default();
+        let torrents = self.store.list_torrents().unwrap_or_default();
+        let mut out: Vec<MediaEntry> = torrents
+            .iter()
+            .filter(|t| t.completed_at.is_some())
+            .filter_map(|t| {
+                movies
+                    .iter()
+                    .find(|m| m.imdb_id == t.imdb_id)
+                    .map(|m| MediaEntry::new(m, t))
+            })
+            .collect();
+        out.sort_by(|a, b| a.title.cmp(&b.title));
+        out
+    }
+
+    fn entry(&self, id: &str) -> Option<MediaEntry> {
+        let t = self.store.torrent_for_movie(id).ok().flatten()?;
+        t.completed_at?;
+        let m = self.store.get_movie(id).ok().flatten()?;
+        Some(MediaEntry::new(&m, &t))
+    }
+}

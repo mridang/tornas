@@ -1,12 +1,13 @@
-//! The movie library, seen as a Stremio addon.
+//! The library, seen as a Stremio addon.
 //!
-//! This is where the engine's `MovieView` becomes protocol objects. The `stremio`
-//! module knows nothing about any of these types.
+//! Takes the shared [`Library`] and maps each `MediaEntry` to Stremio's protocol
+//! objects. Same shape as the DLNA adapter: hold the library, read entries, map to
+//! the protocol's type. The `stremio` module knows nothing about any of this.
 
 use std::sync::Arc;
 
 use crate::{
-    engine::{Engine, MovieView},
+    media_catalog::{Library, MediaEntry},
     stremio::{
         AddonBuilder, BuildError, CatalogDef, CatalogHandler, CatalogRequest, CatalogResponse,
         ContentType, Error, ExtraDef, Meta, MetaHandler, MetaPreview, MetaRequest, MetaResponse,
@@ -19,15 +20,22 @@ use crate::{
 /// The id of the single catalogue this addon publishes.
 pub const CATALOG_ID: &str = "local";
 
-/// The addon this crate serves: catalogue, metadata and streams, all answered by
-/// the engine.
-pub type TornasAddon = crate::stremio::Addon<Arc<Engine>, Arc<Engine>, Arc<Engine>>;
+/// A Stremio view of the library. Cloneable because the addon registers it as the
+/// catalogue, metadata and stream handler.
+#[derive(Clone)]
+pub struct StremioLibrary(pub Arc<dyn Library>);
+
+/// The addon this crate serves: catalogue, metadata and streams, all from the library.
+pub type TornasAddon = crate::stremio::Addon<StremioLibrary, StremioLibrary, StremioLibrary>;
 
 /// The Stremio addon as an axum router, ready to merge at the root. Panics only on
 /// a malformed manifest, which is a programming error, not a runtime condition.
-pub fn router(engine: Arc<Engine>) -> axum::Router {
-    let public_url = engine.opts.public_url.clone();
-    let addon = addon(engine).expect("valid addon manifest");
+pub fn router(
+    library: Arc<dyn Library>,
+    addon_name: String,
+    public_url: Option<String>,
+) -> axum::Router {
+    let addon = addon(StremioLibrary(library), addon_name).expect("valid addon manifest");
     crate::stremio::router_with(
         addon,
         crate::stremio::RouterOptions {
@@ -42,12 +50,7 @@ pub fn router(engine: Arc<Engine>) -> axum::Router {
 }
 
 /// Assemble the addon. The manifest follows from the handlers registered here.
-pub fn addon(engine: Arc<Engine>) -> Result<TornasAddon, BuildError> {
-    let name = engine
-        .opts
-        .addon_name
-        .clone()
-        .unwrap_or_else(|| "Tornas".to_owned());
+pub fn addon(library: StremioLibrary, name: String) -> Result<TornasAddon, BuildError> {
     AddonBuilder::new("org.mridang.tornas", name, env!("CARGO_PKG_VERSION"))
         .description("Movies downloaded to this home media center")
         .logo("https://raw.githubusercontent.com/Stremio/stremio-art/main/originals/Stremio-logo-white.png")
@@ -58,56 +61,54 @@ pub fn addon(engine: Arc<Engine>) -> Result<TornasAddon, BuildError> {
                 .extra(ExtraDef::optional("search"))
                 .extra(ExtraDef::optional("skip"))
                 .extra(ExtraDef::optional("genre"))],
-            engine.clone(),
+            library.clone(),
         )
-        .meta([ContentType::Movie], engine.clone())
-        .stream([ContentType::Movie], engine)
+        .meta([ContentType::Movie], library.clone())
+        .stream([ContentType::Movie], library)
         .build()
 }
 
 /// Stremio pages in hundreds; a shorter page tells it the catalogue has ended.
 const PAGE: usize = 100;
 
-fn preview(v: &MovieView) -> MetaPreview {
-    let m = &v.movie;
+fn preview(e: &MediaEntry) -> MetaPreview {
     MetaPreview {
-        id: m.imdb_id.clone(),
+        id: e.id.clone(),
         content_type: Some(ContentType::Movie),
-        name: m.title.clone(),
-        poster: m.poster_url.clone(),
+        name: e.title.clone(),
+        poster: e.poster.clone(),
         poster_shape: Some(PosterShape::Poster),
-        genres: m.genres.clone(),
-        imdb_rating: m.rating.map(|r| format!("{r:.1}")),
-        release_info: m.year.map(|y| y.to_string()),
-        description: m.overview.clone(),
+        genres: e.genres.clone(),
+        imdb_rating: e.rating.map(|r| format!("{r:.1}")),
+        release_info: e.year.map(|y| y.to_string()),
+        description: e.overview.clone(),
         links: Vec::new(),
     }
 }
 
-fn full_meta(v: &MovieView) -> Meta {
-    let m = &v.movie;
+fn full_meta(e: &MediaEntry) -> Meta {
     Meta {
-        id: m.imdb_id.clone(),
+        id: e.id.clone(),
         content_type: Some(ContentType::Movie),
-        name: m.title.clone(),
-        genres: m.genres.clone(),
-        poster: m.poster_url.clone(),
+        name: e.title.clone(),
+        genres: e.genres.clone(),
+        poster: e.poster.clone(),
         poster_shape: Some(PosterShape::Poster),
-        background: m.backdrop_url.clone(),
-        description: m.overview.clone(),
-        release_info: m.year.map(|y| y.to_string()),
-        imdb_rating: m.rating.map(|r| format!("{r:.1}")),
+        background: e.backdrop.clone(),
+        description: e.overview.clone(),
+        release_info: e.year.map(|y| y.to_string()),
+        imdb_rating: e.rating.map(|r| format!("{r:.1}")),
         // Only the year is known, so use the first of January rather than invent a
         // day; Stremio only renders the year for movies.
-        released: m.year.map(|y| format!("{y}-01-01T00:00:00.000Z")),
-        runtime: m.runtime_min.map(|r| format!("{r} min")),
+        released: e.year.map(|y| format!("{y}-01-01T00:00:00.000Z")),
+        runtime: e.runtime_min.map(|r| format!("{r} min")),
         // A movie is a single video whose id matches the meta id, which is what
         // Stremio assumes when `videos` is empty — but being explicit lets players
         // that ask for the video list find it.
         videos: vec![Video {
-            id: m.imdb_id.clone(),
-            title: m.title.clone(),
-            released: m
+            id: e.id.clone(),
+            title: e.title.clone(),
+            released: e
                 .year
                 .map(|y| format!("{y}-01-01T00:00:00.000Z"))
                 .unwrap_or_default(),
@@ -117,53 +118,39 @@ fn full_meta(v: &MovieView) -> Meta {
     }
 }
 
-fn stream_for(v: &MovieView, base_url: &str) -> Option<Stream> {
-    let t = v.torrent.as_ref()?;
-    let filename = url::form_urlencoded::byte_serialize(t.video_file_name.as_bytes())
-        .collect::<String>()
-        .replace('+', "%20");
-    let progress = (v.progress_bytes * 100)
-        .checked_div(v.total_bytes)
-        .unwrap_or(0);
-    let mp4 = t.video_file_name.to_ascii_lowercase().ends_with(".mp4");
-    Some(Stream {
+fn stream_for(e: &MediaEntry, base_url: &str) -> Stream {
+    let mp4 = e.file_name.to_ascii_lowercase().ends_with(".mp4");
+    Stream {
         name: Some("Tornas".to_owned()),
-        description: Some(format!(
-            "{}\n{} · {progress}%",
-            t.video_file_name,
-            human_bytes(t.size_bytes)
-        )),
+        description: Some(format!("{}\n{}", e.file_name, human_bytes(e.file_size))),
         behavior_hints: StreamBehaviorHints {
             // Anything but MP4 over plain HTTP is not playable in the web player.
             not_web_ready: !mp4,
             // Subtitle addons match on the filename; omitting it is why they used
             // to find nothing.
-            filename: Some(t.video_file_name.clone()),
-            video_size: Some(t.size_bytes),
+            filename: Some(e.file_name.clone()),
+            video_size: Some(e.file_size),
             binge_group: Some("tornas".to_owned()),
             ..Default::default()
         },
-        ..Stream::new(StreamSource::Url(format!(
-            "{base_url}/video/{}/{filename}",
-            v.movie.imdb_id
-        )))
-    })
+        ..Stream::new(StreamSource::Url(format!("{base_url}{}", e.video_path())))
+    }
 }
 
-impl CatalogHandler for Arc<Engine> {
+impl CatalogHandler for StremioLibrary {
     async fn catalog(&self, req: CatalogRequest) -> Result<Reply<CatalogResponse>, Error> {
         if req.id != CATALOG_ID {
             return Err(Error::NotFound);
         }
-        let mut movies = self.list_movies().map_err(Error::internal)?;
+        let mut entries = self.0.entries();
         if let Some(q) = req.extra.search() {
             let q = q.to_lowercase();
-            movies.retain(|m| m.movie.title.to_lowercase().contains(&q));
+            entries.retain(|e| e.title.to_lowercase().contains(&q));
         }
         if let Some(g) = req.extra.genre() {
-            movies.retain(|m| m.movie.genres.iter().any(|x| x.eq_ignore_ascii_case(g)));
+            entries.retain(|e| e.genres.iter().any(|x| x.eq_ignore_ascii_case(g)));
         }
-        let metas = movies
+        let metas = entries
             .iter()
             .skip(req.extra.skip().unwrap_or(0))
             .take(PAGE)
@@ -178,26 +165,22 @@ impl CatalogHandler for Arc<Engine> {
     }
 }
 
-impl MetaHandler for Arc<Engine> {
+impl MetaHandler for StremioLibrary {
     async fn meta(&self, req: MetaRequest) -> Result<Reply<MetaResponse>, Error> {
-        let movie = self.get_movie(&req.id).map_err(Error::internal)?;
         Ok(Reply::new(MetaResponse {
-            meta: movie.as_ref().map(full_meta),
+            meta: self.0.entry(&req.id).as_ref().map(full_meta),
         })
         .cache_max_age(30))
     }
 }
 
-impl StreamHandler for Arc<Engine> {
+impl StreamHandler for StremioLibrary {
     async fn stream(&self, req: StreamRequest) -> Result<Reply<StreamResponse>, Error> {
-        let movie = self.get_movie(&req.id).map_err(Error::internal)?;
-        let streams = movie
-            .as_ref()
-            .and_then(|v| stream_for(v, &req.base_url))
-            .map(|s| vec![s])
+        let streams = self
+            .0
+            .entry(&req.id)
+            .map(|e| vec![stream_for(&e, &req.base_url)])
             .unwrap_or_default();
-        // Not cached: whether a movie is playable changes as it downloads, and a
-        // stale "no streams" is the most annoying answer to get.
         Ok(Reply::new(StreamResponse { streams }))
     }
 }

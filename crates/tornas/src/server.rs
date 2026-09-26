@@ -28,7 +28,13 @@ pub async fn run_server(opts: ServerOpts) -> anyhow::Result<()> {
         .tls_opt(opts.tls_cert.clone().zip(opts.tls_key.clone()))
         .http_layer(crate::http::shared(engine.clone()))
         .add(crate::http::routes(engine.clone()))
-        .add(crate::adapters::stremio::router(engine.clone()))
+        .add(crate::adapters::stremio::router(
+            engine.library.clone(),
+            opts.addon_name
+                .clone()
+                .unwrap_or_else(|| "Tornas".to_owned()),
+            opts.public_url.clone(),
+        ))
         .add_opt(Dlna::start(&opts, &engine).await)
         .add_opt(Mdns::from_opts(&opts))
         .add(EngineWorkers(engine.clone()))
@@ -86,7 +92,9 @@ impl Dlna {
             friendly_name: name,
             http_listen_port: opts.http_listen.port(),
             http_prefix: "/upnp".to_owned(),
-            browse_provider: Box::new(crate::dlna::Directory::new(engine.library.clone())),
+            browse_provider: Box::new(crate::dlna::Directory::new(std::sync::Arc::new(
+                crate::adapters::dlna::DlnaLibrary(engine.library.clone()),
+            ))),
             // The SSDP task is aborted on shutdown by the runtime; this token only
             // gives the server something to hold.
             cancellation_token: CancellationToken::new(),
