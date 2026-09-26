@@ -114,7 +114,6 @@ pub(super) async fn api_root() -> impl IntoResponse {
         "resources": {
             "movies": "/api/movies",
             "pause": "/api/pause",
-            "logs": "/api/logs",
             "trackers": "/api/trackers",
             "config": "/api/config",
             "budget": "/api/budget",
@@ -196,28 +195,6 @@ pub(super) async fn api_config(State(e): State<AppState>) -> impl IntoResponse {
             "allowlist": e.allowlist,
         },
     }))
-}
-
-#[derive(Deserialize)]
-pub(super) struct LogsQuery {
-    #[serde(default)]
-    since: u64,
-    #[serde(default = "default_log_limit")]
-    limit: usize,
-    level: Option<String>,
-}
-pub(super) fn default_log_limit() -> usize {
-    200
-}
-
-pub(super) async fn api_logs(
-    axum::extract::Query(q): axum::extract::Query<LogsQuery>,
-) -> impl IntoResponse {
-    let min = q
-        .level
-        .as_deref()
-        .and_then(|l| l.parse::<tracing::Level>().ok());
-    Json(crate::logging::recent(q.since, q.limit.min(2000), min))
 }
 
 pub(super) async fn api_status(State(e): State<AppState>) -> ApiResult<impl IntoResponse> {

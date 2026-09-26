@@ -24,8 +24,8 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::engine::Engine;
 
 use api::{
-    api_add, api_budget, api_config, api_delete, api_events, api_get, api_list, api_logs,
-    api_patch, api_pause_delete, api_pause_get, api_pause_put, api_root, api_session, api_status,
+    api_add, api_budget, api_config, api_delete, api_events, api_get, api_list, api_patch,
+    api_pause_delete, api_pause_get, api_pause_put, api_root, api_session, api_status,
     api_trackers, api_trackers_refresh, healthz, openapi, prometheus,
 };
 use dashboard::index;
@@ -141,7 +141,6 @@ pub fn routes(engine: AppState) -> Router {
             get(api_trackers).post(api_trackers_refresh),
         )
         .route("/api/config", get(api_config))
-        .route("/api/logs", get(api_logs))
         .route(
             "/api/pause",
             get(api_pause_get)

@@ -67,24 +67,6 @@ impl Api {
         Ok(serde_json::to_string_pretty(&value)?)
     }
 
-    /// Recent log lines after `since`, oldest first.
-    pub(super) async fn logs(
-        &self,
-        since: u64,
-        limit: usize,
-        level: Option<&str>,
-    ) -> anyhow::Result<Vec<LogLine>> {
-        let mut req = self
-            .request(reqwest::Method::GET, "/api/logs")
-            .timeout(Duration::from_secs(30))
-            .query(&[("since", since.to_string()), ("limit", limit.to_string())]);
-        if let Some(l) = level {
-            req = req.query(&[("level", l)]);
-        }
-        let resp = req.send().await.context("GET /api/logs")?;
-        Ok(checked(resp).await?.json().await?)
-    }
-
     /// Start or extend the global pause.
     pub(super) async fn pause(&self, body: serde_json::Value) -> anyhow::Result<Pause> {
         let resp = self
@@ -197,16 +179,6 @@ pub(super) struct Event {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-pub(super) struct LogLine {
-    pub seq: u64,
-    pub ts: i64,
-    pub level: String,
-    pub target: String,
-    pub message: String,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
 pub(super) struct Resumed {
     pub resumed: u64,
 }
@@ -258,12 +230,6 @@ pub(super) const HEADERS: [&str; 9] = [
 pub(super) fn movie_rows(status: &Status) -> Vec<Vec<String>> {
     let now = now_secs();
     status.movies.iter().map(|m| m.row(now)).collect()
-}
-
-/// UTC `HH:MM:SS` from unix seconds, without pulling in a date library.
-pub(super) fn chrono_like(ts: i64) -> String {
-    let s = ts.rem_euclid(86_400);
-    format!("{:02}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
 }
 
 /// The "PAUSED ..." banner, or nothing when the server is running.

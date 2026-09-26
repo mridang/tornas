@@ -63,8 +63,7 @@ pub(super) async fn require_token(
     let protected = path.starts_with("/api")
         && (req.method() != http::Method::GET
             && req.method() != http::Method::HEAD
-            && req.method() != http::Method::OPTIONS
-            || path == "/api/logs");
+            && req.method() != http::Method::OPTIONS);
     if !protected {
         return next.run(req).await;
     }

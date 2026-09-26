@@ -31,7 +31,6 @@ fn main() -> anyhow::Result<()> {
             Command::Health(o) => tornas::health::run(o).await,
             Command::SelfUpdate(o) => tornas::update::run(o).await,
             Command::Doctor(o) => tornas::cli::doctor(o),
-            Command::Logs(o) => tornas::cli::logs(o).await,
             Command::Pause(o) => tornas::cli::pause(o).await,
             Command::Resume(o) => tornas::cli::resume(o).await,
             Command::Config(c) => tornas::config::check::run(c),

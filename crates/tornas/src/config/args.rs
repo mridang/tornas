@@ -58,8 +58,6 @@ pub enum Command {
     SelfUpdate(UpdateOpts),
     /// Report CPU hashing capability, disk placement and environment; benchmark SHA-1.
     Doctor(DoctorOpts),
-    /// Show recent server log lines (from the in-memory ring, no journal needed).
-    Logs(LogsOpts),
     /// Pause every torrent now. Resumes automatically after the configured
     /// duration (default 3h) unless `--indefinite`.
     Pause(PauseOpts),
@@ -411,25 +409,6 @@ pub struct DoctorOpts {
     /// MiB to hash for the SHA-1 benchmark.
     #[arg(long, default_value = "256")]
     pub bench_mib: usize,
-}
-
-#[derive(Args, Debug, Clone)]
-pub struct LogsOpts {
-    /// Server base URL.
-    #[arg(long, env = "TORNAS_SERVER", default_value = "http://127.0.0.1:3030")]
-    pub server: String,
-    /// API token if the server has one (GET /api/logs is protected because logs can leak).
-    #[arg(long, env = "TORNAS_API_TOKEN", hide_env_values = true)]
-    pub token: Option<String>,
-    /// Lines to show.
-    #[arg(short = 'n', long, default_value = "100")]
-    pub lines: usize,
-    /// Keep polling for new lines.
-    #[arg(short = 'f', long)]
-    pub follow: bool,
-    /// Minimum level: error, warn, info, debug, trace.
-    #[arg(long)]
-    pub level: Option<String>,
 }
 
 #[derive(Args, Debug, Clone)]

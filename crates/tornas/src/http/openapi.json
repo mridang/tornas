@@ -612,55 +612,6 @@
         }
       }
     },
-    "/api/logs": {
-      "get": {
-        "tags": [
-          "system"
-        ],
-        "summary": "Recent log lines from the in-memory ring",
-        "parameters": [
-          {
-            "name": "since",
-            "in": "query",
-            "schema": {
-              "type": "integer"
-            },
-            "description": "only lines with seq greater than this"
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "schema": {
-              "type": "integer",
-              "default": 200,
-              "maximum": 2000
-            }
-          },
-          {
-            "name": "level",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "error",
-                "warn",
-                "info",
-                "debug",
-                "trace"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "lines, oldest first"
-          },
-          "401": {
-            "$ref": "#/components/responses/Error"
-          }
-        }
-      }
-    },
     "/api/pause": {
       "get": {
         "tags": [

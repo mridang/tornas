@@ -22,10 +22,7 @@ const FULL_CHECK: &str = "Doing initial checksum validation";
 static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn full_checks() -> usize {
-    tornas::logging::recent(0, 2000, None)
-        .iter()
-        .filter(|l| l.message.contains(FULL_CHECK))
-        .count()
+    log_count(FULL_CHECK)
 }
 
 async fn setup(
@@ -37,7 +34,7 @@ async fn setup(
     std::sync::Arc<librqbit::Session>,
     String,
 ) {
-    let _ = tornas::logging::init("info", tornas::logging::LogFormat::Text, None, 1);
+    init_log_capture();
     let tmp = tempfile::tempdir().unwrap();
     let fx_dir = tmp.path().join("fixtures");
     let fx = fixtures::generate(&FixturesOpts {

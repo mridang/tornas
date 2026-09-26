@@ -377,13 +377,11 @@ async fn api_token_guards_changes_only() {
     opts.api_token = Some("s3cret".into());
     let s = Server::start(Engine::start(opts).await.unwrap()).await;
 
-    // Reads, Stremio and video stay open; changes and logs need the token.
+    // Reads, Stremio and video stay open; writes need the token.
     for p in ["/api/status", "/manifest.json", "/healthz"] {
         let r = s.http.get(s.url(p)).send().await.unwrap();
         assert_eq!(r.status(), StatusCode::OK, "{p}");
     }
-    let r = s.http.get(s.url("/api/logs")).send().await.unwrap();
-    assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
     let r = s.http.put(s.url("/api/pause")).send().await.unwrap();
     assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
     let r = s

@@ -111,3 +111,58 @@ pub async fn wait_state(engine: &Engine, imdb: &str, states: &[&str], secs: u64)
     }
     panic!("{imdb} never reached {states:?}; last state {last:?}");
 }
+
+// ---- test-only log capture -------------------------------------------------
+//
+// Some tests assert on library log output (e.g. that a torrent is not re-hashed).
+// Rather than ship an in-memory ring in the product, the capture lives here.
+
+use std::sync::{Mutex, OnceLock};
+
+static CAPTURE: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+
+fn captured() -> &'static Mutex<Vec<String>> {
+    CAPTURE.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+struct CaptureLayer;
+
+struct MessageVisitor<'a>(&'a mut String);
+impl tracing::field::Visit for MessageVisitor<'_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            *self.0 = format!("{value:?}");
+        }
+    }
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CaptureLayer {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let mut msg = String::new();
+        event.record(&mut MessageVisitor(&mut msg));
+        captured().lock().unwrap().push(msg);
+    }
+}
+
+/// Install a subscriber that captures log messages for [`log_count`]. Idempotent.
+pub fn init_log_capture() {
+    use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+    let _ = tracing_subscriber::registry()
+        .with(EnvFilter::new("info,librqbit=info"))
+        .with(CaptureLayer)
+        .try_init();
+}
+
+/// How many captured messages so far contain `needle`.
+pub fn log_count(needle: &str) -> usize {
+    captured()
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|l| l.contains(needle))
+        .count()
+}
