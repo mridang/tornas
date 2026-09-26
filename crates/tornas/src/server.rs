@@ -21,6 +21,7 @@ use crate::{
 pub async fn run_server(opts: ServerOpts) -> anyhow::Result<()> {
     crate::metrics::install();
     let engine = Engine::start(opts.clone()).await?;
+    crate::metrics::observe(engine.clone());
 
     let mut svc = Service::new("tornas")
         .http(opts.http_listen)

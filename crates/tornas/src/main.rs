@@ -12,6 +12,7 @@ fn main() -> anyhow::Result<()> {
     let telemetry = rt.block_on(async {
         tornas::telemetry::init(cli.otlp_endpoint.as_deref(), &cli.otel_service_name)
     })?;
+    tornas::metrics::set_registry(telemetry.registry());
     tornas::logging::init(&cli.log, &telemetry)?;
 
     let result = rt.block_on(async move {

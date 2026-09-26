@@ -19,6 +19,7 @@ struct Server {
 
 impl Server {
     async fn start(engine: Arc<Engine>) -> Self {
+        init_telemetry();
         let app = tornas::http::router(engine.clone(), None);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -331,7 +332,9 @@ async fn api_stremio_and_video() {
         );
     }
 
-    // Metrics: parseable families, each declared once.
+    // Metrics: parseable families, each declared once. Register the observable
+    // instruments against this test's engine first (main does this after start).
+    tornas::metrics::observe(s.engine.clone());
     let body = s
         .http
         .get(s.url("/metrics"))

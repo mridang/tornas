@@ -166,3 +166,19 @@ pub fn log_count(needle: &str) -> usize {
         .filter(|l| l.contains(needle))
         .count()
 }
+
+/// Install the Prometheus meter provider and metric instruments once for the whole
+/// test process, the way `main` does at startup. Idempotent: only the first call
+/// builds the provider (the global meter provider and the metrics registry are
+/// process-wide singletons). OTLP export stays off (no endpoint).
+pub fn init_telemetry() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let telemetry = tornas::telemetry::init(None, "tornas").expect("telemetry init");
+        tornas::metrics::set_registry(telemetry.registry());
+        tornas::metrics::install();
+        // Leak it: the providers must outlive every test in the process.
+        std::mem::forget(telemetry);
+    });
+}

@@ -27,8 +27,8 @@ pub(super) async fn healthz(State(e): State<AppState>) -> Response {
     }
 }
 
-pub(super) async fn prometheus(State(e): State<AppState>) -> ApiResult<impl IntoResponse> {
-    let body = crate::metrics::render(&e)?;
+pub(super) async fn prometheus() -> ApiResult<impl IntoResponse> {
+    let body = crate::metrics::render()?;
     Ok((
         [(
             header::CONTENT_TYPE,

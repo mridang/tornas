@@ -45,7 +45,7 @@ pub struct MovieView {
     pub protected: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct BudgetView {
     pub limit: u64,
     pub used: u64,
@@ -55,7 +55,7 @@ pub struct BudgetView {
     pub next_eviction: Option<Candidate>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct SessionView {
     pub download_bps: u64,
     pub upload_bps: u64,

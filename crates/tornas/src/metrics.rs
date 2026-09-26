@@ -1,157 +1,188 @@
-//! Prometheus metrics.
+//! Metrics, as OpenTelemetry instruments.
 //!
-//! Two sources feed `/metrics`:
-//! * Event counters and the HTTP histogram go through the `metrics` facade, so
-//!   they accumulate between scrapes. librqbit's uTP code reports through the same
-//!   recorder once uTP sockets are in use.
-//! * Everything describing current state (budget, library, per-torrent, session,
-//!   DHT, tracker feed, process) is rendered fresh from typed engine data on each
-//!   scrape.
+//! Event counters and the HTTP histogram are synchronous instruments that
+//! accumulate between scrapes. Everything describing current state (budget,
+//! library, per-torrent, session, DHT, trackers, process) is an **observable**
+//! instrument whose callback reads typed engine data at collection time — there is
+//! no hand-written text exposition any more.
 //!
-//! librqbit's own `SessionStatsSnapshot::as_prometheus` is deliberately not used:
-//! it emits `rqbit_peers_queued` twice (the second is really the peers-seen
-//! count), and Prometheus rejects any scrape containing a duplicate series.
+//! The meter provider and its Prometheus reader live in [`telemetry`](crate::telemetry);
+//! `/metrics` encodes that reader's registry, and when an OTLP endpoint is
+//! configured the same instruments are pushed to the collector.
 //!
-//! Peer addresses are never used as label values; they would create unbounded
-//! series. Per-torrent series are labelled by `imdb_id` only, and descriptive
-//! fields live on `tornas_torrent_info` for joins.
+//! Peer addresses are never label values (they would be unbounded); per-torrent
+//! series are labelled by `imdb_id`, with descriptive fields on `tornas_torrent_info`.
 
-use std::{collections::BTreeMap, fmt::Write, sync::OnceLock, time::Instant};
+use std::{
+    any::Any,
+    sync::{Arc, Mutex, OnceLock},
+    time::{Duration, Instant},
+};
 
-use metrics::{counter, describe_counter, describe_histogram, histogram};
-use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
+use anyhow::Context;
+use opentelemetry::{
+    KeyValue,
+    metrics::{AsyncInstrument, Counter, Histogram, Meter, ObservableCounter, ObservableGauge},
+};
 
-use crate::engine::Engine;
+use crate::engine::{Engine, StatusView, TorrentFacts};
 
-static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
+fn meter() -> Meter {
+    opentelemetry::global::meter("tornas")
+}
 
-const HTTP_BUCKETS: &[f64] = &[
-    0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
-];
+// ---- synchronous instruments ----------------------------------------------
 
-/// Install the global recorder once per process. Safe to call repeatedly.
-pub fn install() -> Option<&'static PrometheusHandle> {
-    if let Some(h) = HANDLE.get() {
-        return Some(h);
-    }
-    let handle = PrometheusBuilder::new()
-        .set_buckets_for_metric(
-            Matcher::Full("tornas_http_request_duration_seconds".into()),
-            HTTP_BUCKETS,
-        )
-        .ok()?
-        .install_recorder()
-        .ok()?;
-    describe_counter!(
-        "tornas_adds_total",
-        "Movies added, by result (ok, refused, error)"
-    );
-    describe_counter!(
-        "tornas_evictions_total",
-        "Movies evicted to stay under the disk budget"
-    );
-    describe_counter!("tornas_evicted_bytes_total", "Bytes freed by eviction");
-    describe_counter!("tornas_tmdb_errors_total", "Failed TMDB lookups");
-    describe_counter!(
-        "tornas_streams_total",
-        "Video stream requests, by kind (range or full)"
-    );
-    describe_counter!(
-        "tornas_stream_bytes_total",
-        "Bytes requested by video stream clients"
-    );
-    describe_counter!("tornas_removals_total", "Movies removed through the API");
-    describe_counter!(
-        "tornas_seeding_paused_total",
-        "Downloads that finished and were paused"
-    );
-    describe_counter!(
-        "tornas_stalled_evictions_total",
-        "Downloads evicted after making no progress"
-    );
-    describe_counter!(
-        "tornas_unauthorized_total",
-        "Requests refused for a missing or wrong API token"
-    );
-    describe_counter!(
-        "tornas_forbidden_source_total",
-        "Requests refused because the source address is not allowed"
-    );
-    describe_counter!("tornas_pauses_total", "Times everything was paused");
-    describe_counter!(
-        "tornas_resumes_total",
-        "Times a pause ended, by trigger (manual or auto on expiry)"
-    );
-    describe_counter!(
-        "tornas_http_requests_total",
-        "HTTP requests served, by route template, method and status"
-    );
-    describe_histogram!(
-        "tornas_http_request_duration_seconds",
-        "Time until response headers, by route template. For video this is time to first byte, not the whole stream."
-    );
-    // Register every counter at zero so the first scrape already shows the full set.
+struct Instruments {
+    adds: Counter<u64>,
+    evictions: Counter<u64>,
+    evicted_bytes: Counter<u64>,
+    tmdb_errors: Counter<u64>,
+    streams: Counter<u64>,
+    stream_bytes: Counter<u64>,
+    removals: Counter<u64>,
+    seeding_paused: Counter<u64>,
+    stalled_evictions: Counter<u64>,
+    unauthorized: Counter<u64>,
+    forbidden_source: Counter<u64>,
+    pauses: Counter<u64>,
+    resumes: Counter<u64>,
+    http_requests: Counter<u64>,
+    http_duration: Histogram<f64>,
+}
+
+static INSTRUMENTS: OnceLock<Instruments> = OnceLock::new();
+
+fn instruments() -> &'static Instruments {
+    INSTRUMENTS.get_or_init(|| {
+        let m = meter();
+        let counter = |name: &'static str, help: &'static str| {
+            m.u64_counter(name).with_description(help).build()
+        };
+        Instruments {
+            adds: counter(
+                "tornas_adds_total",
+                "Movies added, by result (ok, refused, error)",
+            ),
+            evictions: counter(
+                "tornas_evictions_total",
+                "Movies evicted to stay under the disk budget",
+            ),
+            evicted_bytes: counter("tornas_evicted_bytes_total", "Bytes freed by eviction"),
+            tmdb_errors: counter("tornas_tmdb_errors_total", "Failed TMDB lookups"),
+            streams: counter(
+                "tornas_streams_total",
+                "Video stream requests, by kind (range or full)",
+            ),
+            stream_bytes: counter(
+                "tornas_stream_bytes_total",
+                "Bytes requested by video stream clients",
+            ),
+            removals: counter("tornas_removals_total", "Movies removed through the API"),
+            seeding_paused: counter(
+                "tornas_seeding_paused_total",
+                "Downloads that finished and were paused",
+            ),
+            stalled_evictions: counter(
+                "tornas_stalled_evictions_total",
+                "Downloads evicted after making no progress",
+            ),
+            unauthorized: counter(
+                "tornas_unauthorized_total",
+                "Requests refused for a missing or wrong API token",
+            ),
+            forbidden_source: counter(
+                "tornas_forbidden_source_total",
+                "Requests refused because the source address is not allowed",
+            ),
+            pauses: counter("tornas_pauses_total", "Times everything was paused"),
+            resumes: counter(
+                "tornas_resumes_total",
+                "Times a pause ended, by trigger (manual or auto)",
+            ),
+            http_requests: counter(
+                "tornas_http_requests_total",
+                "HTTP requests served, by route template, method and status",
+            ),
+            http_duration: m
+                .f64_histogram("tornas_http_request_duration_seconds")
+                .with_description(
+                    "Time until response headers, by route template. For video this is time to \
+                     first byte, not the whole stream.",
+                )
+                .build(),
+        }
+    })
+}
+
+/// Build the instruments and seed the labelled ones at zero, so the first scrape
+/// already carries the full set of event counters. Call once, after the meter
+/// provider is installed.
+pub fn install() {
+    let i = instruments();
     for r in ["ok", "refused", "error"] {
-        counter!("tornas_adds_total", "result" => r).absolute(0);
+        i.adds.add(0, &[KeyValue::new("result", r)]);
     }
     for k in ["range", "full"] {
-        counter!("tornas_streams_total", "kind" => k).absolute(0);
+        i.streams.add(0, &[KeyValue::new("kind", k)]);
     }
     for t in ["manual", "auto"] {
-        counter!("tornas_resumes_total", "trigger" => t).absolute(0);
+        i.resumes.add(0, &[KeyValue::new("trigger", t)]);
     }
-    for name in [
-        "tornas_evictions_total",
-        "tornas_evicted_bytes_total",
-        "tornas_tmdb_errors_total",
-        "tornas_stream_bytes_total",
-        "tornas_removals_total",
-        "tornas_seeding_paused_total",
-        "tornas_stalled_evictions_total",
-        "tornas_unauthorized_total",
-        "tornas_forbidden_source_total",
-        "tornas_pauses_total",
+    for c in [
+        &i.evictions,
+        &i.evicted_bytes,
+        &i.tmdb_errors,
+        &i.stream_bytes,
+        &i.removals,
+        &i.seeding_paused,
+        &i.stalled_evictions,
+        &i.unauthorized,
+        &i.forbidden_source,
+        &i.pauses,
     ] {
-        counter!(name).absolute(0);
+        c.add(0, &[]);
     }
-    let _ = HANDLE.set(handle);
-    HANDLE.get()
 }
 
 pub fn add(result: &'static str) {
-    counter!("tornas_adds_total", "result" => result).increment(1);
+    instruments()
+        .adds
+        .add(1, &[KeyValue::new("result", result)]);
 }
 pub fn eviction(bytes: u64) {
-    counter!("tornas_evictions_total").increment(1);
-    counter!("tornas_evicted_bytes_total").increment(bytes);
+    instruments().evictions.add(1, &[]);
+    instruments().evicted_bytes.add(bytes, &[]);
 }
 pub fn tmdb_error() {
-    counter!("tornas_tmdb_errors_total").increment(1);
+    instruments().tmdb_errors.add(1, &[]);
 }
 pub fn stream(kind: &'static str, bytes: u64) {
-    counter!("tornas_streams_total", "kind" => kind).increment(1);
-    counter!("tornas_stream_bytes_total").increment(bytes);
+    instruments().streams.add(1, &[KeyValue::new("kind", kind)]);
+    instruments().stream_bytes.add(bytes, &[]);
 }
 pub fn seeding_paused() {
-    counter!("tornas_seeding_paused_total").increment(1);
+    instruments().seeding_paused.add(1, &[]);
 }
 pub fn stalled_eviction() {
-    counter!("tornas_stalled_evictions_total").increment(1);
+    instruments().stalled_evictions.add(1, &[]);
 }
 pub fn forbidden_source() {
-    counter!("tornas_forbidden_source_total").increment(1);
+    instruments().forbidden_source.add(1, &[]);
 }
 pub fn unauthorized() {
-    counter!("tornas_unauthorized_total").increment(1);
+    instruments().unauthorized.add(1, &[]);
 }
 pub fn paused() {
-    counter!("tornas_pauses_total").increment(1);
+    instruments().pauses.add(1, &[]);
 }
 pub fn resumed(trigger: &'static str) {
-    counter!("tornas_resumes_total", "trigger" => trigger).increment(1);
+    instruments()
+        .resumes
+        .add(1, &[KeyValue::new("trigger", trigger)]);
 }
 pub fn removal() {
-    counter!("tornas_removals_total").increment(1);
+    instruments().removals.add(1, &[]);
 }
 
 /// Middleware: count requests and time them by route *template* (never the raw
@@ -165,7 +196,6 @@ pub async fn track_http(
         .get::<axum::extract::MatchedPath>()
         .map(|m| m.as_str().to_owned())
         .unwrap_or_else(|| "unmatched".to_owned());
-    // Static strings, so the label does not borrow the request that is moved below.
     let method: &'static str = match req.method().as_str() {
         "GET" => "GET",
         "HEAD" => "HEAD",
@@ -179,343 +209,491 @@ pub async fn track_http(
     let start = Instant::now();
     let resp = next.run(req).await;
     let status = resp.status().as_u16().to_string();
-    counter!(
-        "tornas_http_requests_total",
-        "route" => route.clone(),
-        "method" => method,
-        "status" => status
-    )
-    .increment(1);
-    histogram!("tornas_http_request_duration_seconds", "route" => route)
-        .record(start.elapsed().as_secs_f64());
+    let i = instruments();
+    i.http_requests.add(
+        1,
+        &[
+            KeyValue::new("route", route.clone()),
+            KeyValue::new("method", method),
+            KeyValue::new("status", status),
+        ],
+    );
+    i.http_duration.record(
+        start.elapsed().as_secs_f64(),
+        &[KeyValue::new("route", route)],
+    );
     resp
 }
 
-// ---- text exposition helpers ----------------------------------------------
+// ---- the /metrics scrape ---------------------------------------------------
 
-fn esc(v: &str) -> String {
-    v.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
+static REGISTRY: OnceLock<prometheus::Registry> = OnceLock::new();
+
+/// Hand `/metrics` the Prometheus registry the meter provider gathers into. Called
+/// once from the telemetry wiring.
+pub fn set_registry(registry: prometheus::Registry) {
+    let _ = REGISTRY.set(registry);
 }
 
-fn family(out: &mut String, name: &str, kind: &str, help: &str) {
-    let _ = writeln!(out, "# HELP {name} {help}\n# TYPE {name} {kind}");
+/// Encode the current metrics as Prometheus text.
+pub fn render() -> anyhow::Result<String> {
+    let registry = REGISTRY.get().context("metrics registry not initialised")?;
+    let mut buf = String::new();
+    prometheus::TextEncoder::new().encode_utf8(&registry.gather(), &mut buf)?;
+    Ok(buf)
 }
 
-fn sample(out: &mut String, name: &str, labels: &[(&str, &str)], value: impl std::fmt::Display) {
-    if labels.is_empty() {
-        let _ = writeln!(out, "{name} {value}");
-    } else {
-        let l: Vec<String> = labels
-            .iter()
-            .map(|(k, v)| format!("{k}=\"{}\"", esc(v)))
+// ---- observable state ------------------------------------------------------
+
+/// The engine reads a scrape needs, computed once and shared by every observable
+/// callback in that scrape (they fire back to back). A short TTL means one scrape
+/// does the work once.
+struct Cached {
+    status: StatusView,
+    facts: Vec<TorrentFacts>,
+    fetched_bytes: u64,
+    uploaded_bytes: u64,
+    blocked_incoming: u64,
+    blocked_outgoing: u64,
+    download_bps: u64,
+    upload_bps: u64,
+    peers: Vec<(&'static str, u64)>,
+    peers_live: Vec<(&'static str, u64)>,
+    steals: u64,
+    connections: Vec<(&'static str, &'static str, &'static str, u64)>,
+    dht: Option<(u64, u64, u64)>,
+    trackers_enabled: bool,
+    trackers_active: Vec<(String, u64)>,
+    tracker_list_age: Option<i64>,
+    tracker_rejected: u64,
+    tracker_deduplicated: u64,
+    tracker_sources: Vec<(String, bool, u64)>,
+}
+
+struct Snapshot {
+    engine: Arc<Engine>,
+    cache: Mutex<Option<(Instant, Arc<Cached>)>>,
+}
+
+const SNAPSHOT_TTL: Duration = Duration::from_millis(250);
+
+impl Snapshot {
+    fn get(&self) -> Arc<Cached> {
+        let mut guard = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, cached)) = guard.as_ref()
+            && at.elapsed() < SNAPSHOT_TTL
+        {
+            return cached.clone();
+        }
+        let cached = Arc::new(self.compute());
+        *guard = Some((Instant::now(), cached.clone()));
+        cached
+    }
+
+    fn compute(&self) -> Cached {
+        let e = &self.engine;
+        let status = e.status().unwrap_or_else(|_| StatusView {
+            pause: e.pause_view(),
+            version: env!("CARGO_PKG_VERSION"),
+            hostname: String::new(),
+            warnings: Vec::new(),
+            budget: Default::default(),
+            session: Default::default(),
+            movies: Vec::new(),
+            events: Vec::new(),
+        });
+        let facts = e.torrent_facts().unwrap_or_default();
+        let snap = e.session.stats_snapshot();
+        let p = &snap.peers;
+        let c = &snap.connections;
+        let connections = [("tcp", &c.tcp), ("utp", &c.utp), ("socks", &c.socks)]
+            .into_iter()
+            .flat_map(|(t, cf)| {
+                [("v4", &cf.v4), ("v6", &cf.v6)]
+                    .into_iter()
+                    .flat_map(move |(fam, st)| {
+                        [
+                            (t, fam, "attempt", st.attempts),
+                            (t, fam, "success", st.successes),
+                            (t, fam, "error", st.errors),
+                        ]
+                    })
+            })
             .collect();
-        let _ = writeln!(out, "{name}{{{}}} {value}", l.join(","));
+
+        let mut schemes: std::collections::BTreeMap<String, u64> = Default::default();
+        for t in e.trackers.current() {
+            if let Some(s) = t.split("://").next() {
+                *schemes.entry(s.to_owned()).or_default() += 1;
+            }
+        }
+        let feed = e.trackers.state();
+        let tracker_sources = feed
+            .sources
+            .iter()
+            .map(|s| {
+                let up = s.enabled && s.last_error.is_none() && s.last_ok_at.is_some();
+                (s.name.clone(), up, s.accepted as u64)
+            })
+            .collect();
+
+        Cached {
+            fetched_bytes: snap.counters.fetched_bytes,
+            uploaded_bytes: snap.counters.uploaded_bytes,
+            blocked_incoming: snap.counters.blocked_incoming,
+            blocked_outgoing: snap.counters.blocked_outgoing,
+            download_bps: snap.download_speed.as_bytes(),
+            upload_bps: snap.upload_speed.as_bytes(),
+            peers: vec![
+                ("queued", u64::from(p.queued)),
+                ("connecting", u64::from(p.connecting)),
+                ("live", u64::from(p.live)),
+                ("seen", u64::from(p.seen)),
+                ("dead", u64::from(p.dead)),
+                ("not_needed", u64::from(p.not_needed)),
+            ],
+            peers_live: vec![
+                ("tcp", u64::from(p.live_tcp)),
+                ("utp", u64::from(p.live_utp)),
+                ("socks", u64::from(p.live_socks)),
+            ],
+            steals: u64::from(p.steals),
+            connections,
+            dht: e.dht_stats(),
+            trackers_enabled: e.trackers.config.read().enabled,
+            trackers_active: schemes.into_iter().collect(),
+            tracker_list_age: feed.updated_at.map(|ts| crate::utils::now_secs() - ts),
+            tracker_rejected: feed.rejected as u64,
+            tracker_deduplicated: feed.deduplicated as u64,
+            tracker_sources,
+            status,
+            facts,
+        }
     }
 }
 
-fn gauge(out: &mut String, name: &str, help: &str, value: impl std::fmt::Display) {
-    family(out, name, "gauge", help);
-    sample(out, name, &[], value);
+/// Observable instruments must be retained for their callbacks to keep firing;
+/// these live for the life of the process.
+static OBSERVERS: OnceLock<Vec<Box<dyn Any + Send + Sync>>> = OnceLock::new();
+
+type Kept = Vec<Box<dyn Any + Send + Sync>>;
+type GaugeFn = Box<dyn Fn(&Cached, &dyn AsyncInstrument<f64>) + Send + Sync>;
+type CounterFn = Box<dyn Fn(&Cached, &dyn AsyncInstrument<u64>) + Send + Sync>;
+type PerTorrent = (&'static str, &'static str, fn(&TorrentFacts) -> f64);
+
+/// Register a gauge whose callback observes from the cached snapshot.
+fn push_gauge(
+    kept: &mut Kept,
+    snap: &Arc<Snapshot>,
+    name: &'static str,
+    help: &'static str,
+    f: GaugeFn,
+) {
+    let snap = snap.clone();
+    let g: ObservableGauge<f64> = meter()
+        .f64_observable_gauge(name)
+        .with_description(help)
+        .with_callback(move |inst| f(&snap.get(), inst))
+        .build();
+    kept.push(Box::new(g));
 }
 
-/// Process stats from /proc (Linux only; absent elsewhere).
-fn process(out: &mut String) {
-    let Ok(status) = std::fs::read_to_string("/proc/self/status") else {
-        return;
-    };
-    let field = |k: &str| -> Option<u64> {
-        status
-            .lines()
-            .find(|l| l.starts_with(k))
-            .and_then(|l| l.split_whitespace().nth(1))
-            .and_then(|v| v.parse().ok())
-    };
-    if let Some(kb) = field("VmRSS:") {
-        gauge(
-            out,
-            "tornas_process_resident_memory_bytes",
-            "Resident memory",
-            kb * 1024,
-        );
-    }
-    if let Some(n) = field("Threads:") {
-        gauge(out, "tornas_process_threads", "OS threads", n);
-    }
-    if let Ok(rd) = std::fs::read_dir("/proc/self/fd") {
-        gauge(
-            out,
-            "tornas_process_open_fds",
-            "Open file descriptors (peer sockets count here)",
-            rd.count(),
-        );
-    }
+/// Register an observable counter (a monotonic session total read from the engine).
+fn push_counter(
+    kept: &mut Kept,
+    snap: &Arc<Snapshot>,
+    name: &'static str,
+    help: &'static str,
+    f: CounterFn,
+) {
+    let snap = snap.clone();
+    let c: ObservableCounter<u64> = meter()
+        .u64_observable_counter(name)
+        .with_description(help)
+        .with_callback(move |inst| f(&snap.get(), inst))
+        .build();
+    kept.push(Box::new(c));
 }
 
-/// Full scrape body.
-pub fn render(engine: &Engine) -> anyhow::Result<String> {
-    let status = engine.status()?;
-    let facts = engine.torrent_facts()?;
-    let mut out = HANDLE.get().map(|h| h.render()).unwrap_or_default();
-    out.push('\n');
+/// Register the observable instruments that read engine state. Call once, after the
+/// engine has started.
+pub fn observe(engine: Arc<Engine>) {
+    let snap = Arc::new(Snapshot {
+        engine: engine.clone(),
+        cache: Mutex::new(None),
+    });
+    let mut kept: Kept = Vec::new();
+    let g = |kept: &mut Kept, name, help, f: GaugeFn| push_gauge(kept, &snap, name, help, f);
+    let cnt = |kept: &mut Kept, name, help, f: CounterFn| push_counter(kept, &snap, name, help, f);
 
-    // ---- build and process
-    family(
-        &mut out,
-        "tornas_build_info",
-        "gauge",
-        "Build information; always 1",
-    );
-    sample(
-        &mut out,
-        "tornas_build_info",
-        &[
-            ("version", env!("CARGO_PKG_VERSION")),
-            ("os", std::env::consts::OS),
-            ("arch", std::env::consts::ARCH),
-        ],
-        1,
-    );
-    gauge(
-        &mut out,
+    // Build info: a constant 1 with descriptive labels.
+    {
+        let build: ObservableGauge<u64> = meter()
+            .u64_observable_gauge("tornas_build_info")
+            .with_description("Build information; always 1")
+            .with_callback(|inst| {
+                inst.observe(
+                    1,
+                    &[
+                        KeyValue::new("version", env!("CARGO_PKG_VERSION")),
+                        KeyValue::new("os", std::env::consts::OS),
+                        KeyValue::new("arch", std::env::consts::ARCH),
+                    ],
+                )
+            })
+            .build();
+        kept.push(Box::new(build));
+    }
+
+    g(
+        &mut kept,
         "tornas_uptime_seconds",
         "Seconds since the server started",
-        status.session.uptime_secs,
+        Box::new(|d, o| o.observe(d.status.session.uptime_secs as f64, &[])),
     );
-    process(&mut out);
 
-    // ---- global pause
-    gauge(
-        &mut out,
+    // ---- global state
+    let opts = engine.opts.clone();
+    let tuning = engine.tuning.clone();
+    let engine_disk = engine.clone();
+    g(
+        &mut kept,
         "tornas_paused",
         "1 while everything is paused",
-        u8::from(status.pause.paused),
+        Box::new(|d, o| o.observe(f64::from(d.status.pause.paused), &[])),
     );
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_paused_for_missing_disk",
-        "1 while everything is paused because the data disk is missing",
-        u8::from(status.pause.reason == Some(crate::engine::PauseReason::DiskMissing)),
+        "1 while paused because the data disk is missing",
+        Box::new(|d, o| {
+            o.observe(
+                f64::from(d.status.pause.reason == Some(crate::engine::PauseReason::DiskMissing)),
+                &[],
+            )
+        }),
     );
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_data_disk_mounted",
         "0 while the data disk is missing (only watched with --require-mount)",
-        u8::from(!engine.is_disk_missing()),
+        Box::new(move |_d, o| o.observe(f64::from(!engine_disk.is_disk_missing()), &[])),
     );
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_queued_downloads",
         "Downloads held back by --max-active-downloads",
-        status.session.queued,
+        Box::new(|d, o| o.observe(d.status.session.queued as f64, &[])),
     );
-    if let Some(max) = engine.opts.max_active_downloads {
-        gauge(
-            &mut out,
+    if let Some(max) = opts.max_active_downloads {
+        g(
+            &mut kept,
             "tornas_max_active_downloads",
             "Configured download queue size",
-            max,
+            Box::new(move |_d, o| o.observe(f64::from(max), &[])),
         );
     }
-    // ---- limits in force (0 = unlimited)
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_ratelimit_download_bytes_per_second",
-        "Global download limit in force after the bandwidth schedule; 0 = unlimited",
-        status.session.download_limit.unwrap_or(0),
+        "Global download limit in force; 0 = unlimited",
+        Box::new(|d, o| o.observe(d.status.session.download_limit.unwrap_or(0) as f64, &[])),
     );
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_ratelimit_upload_bytes_per_second",
-        "Global upload limit in force after the bandwidth schedule; 0 = unlimited",
-        status.session.upload_limit.unwrap_or(0),
+        "Global upload limit in force; 0 = unlimited",
+        Box::new(|d, o| o.observe(d.status.session.upload_limit.unwrap_or(0) as f64, &[])),
     );
-    if let Some(w) = status.session.schedule_window {
-        gauge(
-            &mut out,
-            "tornas_bandwidth_window",
-            "Index of the [[bandwidth.schedule]] window in force",
-            w,
-        );
-    }
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
+        "tornas_bandwidth_window",
+        "Index of the [[bandwidth.schedule]] window in force, or -1",
+        Box::new(|d, o| {
+            o.observe(
+                d.status
+                    .session
+                    .schedule_window
+                    .map(|w| w as f64)
+                    .unwrap_or(-1.0),
+                &[],
+            )
+        }),
+    );
+    let (peer_limit, checks) = (tuning.peer_limit, tuning.concurrent_checks);
+    g(
+        &mut kept,
         "tornas_peer_limit",
         "Default peers per torrent",
-        engine.tuning.peer_limit,
+        Box::new(move |_d, o| o.observe(f64::from(peer_limit), &[])),
     );
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_concurrent_checks",
         "Torrents allowed to hash-check at once",
-        engine.tuning.concurrent_checks,
+        Box::new(move |_d, o| o.observe(f64::from(checks), &[])),
     );
-    if let Some(r) = status.pause.remaining_secs {
-        gauge(
-            &mut out,
-            "tornas_pause_remaining_seconds",
-            "Seconds until the pause lifts on its own",
-            r,
-        );
-    }
+    g(
+        &mut kept,
+        "tornas_pause_remaining_seconds",
+        "Seconds until the pause lifts on its own, or -1",
+        Box::new(|d, o| o.observe(d.status.pause.remaining_secs.unwrap_or(-1) as f64, &[])),
+    );
 
     // ---- budget and disk
-    let b = &status.budget;
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_budget_limit_bytes",
         "Configured disk budget",
-        b.limit,
+        Box::new(|d, o| o.observe(d.status.budget.limit as f64, &[])),
     );
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_budget_used_bytes",
         "Bytes charged to the budget",
-        b.used,
+        Box::new(|d, o| o.observe(d.status.budget.used as f64, &[])),
     );
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_budget_min_free_bytes",
         "Configured minimum free disk",
-        b.min_free,
+        Box::new(|d, o| o.observe(d.status.budget.min_free as f64, &[])),
     );
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_disk_free_bytes",
         "Free bytes on the torrents filesystem",
-        b.disk_free,
+        Box::new(|d, o| o.observe(d.status.budget.disk_free as f64, &[])),
     );
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_disk_total_bytes",
         "Size of the torrents filesystem",
-        b.disk_total,
+        Box::new(|d, o| o.observe(d.status.budget.disk_total as f64, &[])),
     );
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_disk_below_min_free",
         "1 when free disk is under the configured minimum",
-        u8::from(b.disk_free < b.min_free),
+        Box::new(|d, o| {
+            o.observe(
+                f64::from(d.status.budget.disk_free < d.status.budget.min_free),
+                &[],
+            )
+        }),
     );
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_warnings",
         "Active operational warnings",
-        status.warnings.len(),
+        Box::new(|d, o| o.observe(d.status.warnings.len() as f64, &[])),
     );
 
     // ---- library aggregates
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_movies",
         "Movies in the library",
-        status.movies.len(),
+        Box::new(|d, o| o.observe(d.status.movies.len() as f64, &[])),
     );
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_movies_protected",
         "Movies inside the stream grace window, not evictable",
-        status.movies.iter().filter(|m| m.protected).count(),
+        Box::new(|d, o| {
+            o.observe(
+                d.status.movies.iter().filter(|m| m.protected).count() as f64,
+                &[],
+            )
+        }),
     );
-    let mut by_private: BTreeMap<&str, (u64, u64)> =
-        [("true", (0, 0)), ("false", (0, 0))].into_iter().collect();
-    let mut by_state: BTreeMap<&str, u64> = [
-        "checking",
-        "downloading",
-        "seeding",
-        "done",
-        "paused",
-        "error",
-    ]
-    .into_iter()
-    .map(|s| (s, 0))
-    .collect();
-    for f in &facts {
-        let e = by_private
-            .entry(if f.private { "true" } else { "false" })
-            .or_default();
-        e.0 += 1;
-        e.1 += f.size_bytes;
-        *by_state.entry(f.state).or_default() += 1;
-    }
-    family(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_torrents",
-        "gauge",
         "Loaded torrents, by BEP 27 private flag",
+        Box::new(|d, o| {
+            for private in [true, false] {
+                let n = d.facts.iter().filter(|f| f.private == private).count();
+                o.observe(n as f64, &[KeyValue::new("private", private.to_string())]);
+            }
+        }),
     );
-    for (p, (n, _)) in &by_private {
-        sample(&mut out, "tornas_torrents", &[("private", p)], n);
-    }
-    family(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_torrents_size_bytes",
-        "gauge",
         "Whole-torrent size of loaded torrents, by private flag",
+        Box::new(|d, o| {
+            for private in [true, false] {
+                let bytes: u64 = d
+                    .facts
+                    .iter()
+                    .filter(|f| f.private == private)
+                    .map(|f| f.size_bytes)
+                    .sum();
+                o.observe(
+                    bytes as f64,
+                    &[KeyValue::new("private", private.to_string())],
+                );
+            }
+        }),
     );
-    for (p, (_, bytes)) in &by_private {
-        sample(
-            &mut out,
-            "tornas_torrents_size_bytes",
-            &[("private", p)],
-            bytes,
-        );
-    }
-    family(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_torrents_by_state",
-        "gauge",
         "Loaded torrents by state",
+        Box::new(|d, o| {
+            for state in [
+                "checking",
+                "downloading",
+                "seeding",
+                "done",
+                "paused",
+                "error",
+            ] {
+                let n = d.facts.iter().filter(|f| f.state == state).count();
+                o.observe(n as f64, &[KeyValue::new("state", state)]);
+            }
+        }),
     );
-    for (s, n) in &by_state {
-        sample(&mut out, "tornas_torrents_by_state", &[("state", s)], n);
-    }
 
     // ---- per torrent
-    family(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_torrent_info",
-        "gauge",
         "Descriptive labels for a torrent; always 1. Join on imdb_id.",
+        Box::new(|d, o| {
+            for f in &d.facts {
+                o.observe(
+                    1.0,
+                    &[
+                        KeyValue::new("imdb_id", f.imdb_id.clone()),
+                        KeyValue::new("info_hash", f.info_hash.clone()),
+                        KeyValue::new("title", f.title.clone()),
+                        KeyValue::new("state", f.state),
+                        KeyValue::new("private", f.private.to_string()),
+                    ],
+                );
+            }
+        }),
     );
-    for f in &facts {
-        sample(
-            &mut out,
-            "tornas_torrent_info",
-            &[
-                ("imdb_id", &f.imdb_id),
-                ("info_hash", &f.info_hash),
-                ("title", &f.title),
-                ("state", f.state),
-                ("private", if f.private { "true" } else { "false" }),
-            ],
-            1,
-        );
-    }
-    type Getter = fn(&crate::engine::TorrentFacts) -> f64;
-    let per: &[(&str, &str, &str, Getter)] = &[
+    let per: &[PerTorrent] = &[
         (
             "tornas_torrent_size_bytes",
-            "gauge",
             "Size of all files in the torrent",
             |f| f.size_bytes as f64,
         ),
         (
             "tornas_torrent_selected_bytes",
-            "gauge",
-            "Bytes selected for download (the video file)",
+            "Bytes selected for download",
             |f| f.selected_bytes as f64,
         ),
         (
             "tornas_torrent_progress_bytes",
-            "gauge",
             "Verified bytes of the selection on disk",
             |f| f.progress_bytes as f64,
         ),
         (
             "tornas_torrent_progress_ratio",
-            "gauge",
             "Download progress of the selection, 0..1",
             |f| {
                 if f.selected_bytes == 0 {
@@ -525,390 +703,365 @@ pub fn render(engine: &Engine) -> anyhow::Result<String> {
                 }
             },
         ),
-        (
-            "tornas_torrent_piece_length_bytes",
-            "gauge",
-            "Piece size",
-            |f| f.piece_length as f64,
-        ),
+        ("tornas_torrent_piece_length_bytes", "Piece size", |f| {
+            f.piece_length as f64
+        }),
         (
             "tornas_torrent_pieces",
-            "gauge",
             "Pieces in the whole torrent",
             |f| f.pieces as f64,
         ),
         (
             "tornas_torrent_pieces_verified",
-            "gauge",
             "Pieces downloaded and hash-checked this session",
             |f| f.pieces_verified as f64,
         ),
-        (
-            "tornas_torrent_files",
-            "gauge",
-            "Files in the torrent",
-            |f| f.files as f64,
-        ),
-        (
-            "tornas_torrent_fetched_bytes_total",
-            "counter",
-            "Bytes received from peers this session, including discarded",
-            |f| f.fetched_bytes as f64,
-        ),
-        (
-            "tornas_torrent_uploaded_bytes_total",
-            "counter",
-            "Bytes sent to peers this session",
-            |f| f.uploaded_bytes as f64,
-        ),
+        ("tornas_torrent_files", "Files in the torrent", |f| {
+            f.files as f64
+        }),
         (
             "tornas_torrent_download_bytes_per_second",
-            "gauge",
             "Current download rate",
             |f| f.download_bps as f64,
         ),
         (
             "tornas_torrent_upload_bytes_per_second",
-            "gauge",
             "Current upload rate",
             |f| f.upload_bps as f64,
         ),
         (
             "tornas_torrent_idle_seconds",
-            "gauge",
-            "Seconds since last streamed or added; eviction is least recently used first",
+            "Seconds since last streamed or added",
             |f| f.idle_secs as f64,
         ),
     ];
-    for (name, kind, help, get) in per {
-        family(&mut out, name, kind, help);
-        for f in &facts {
-            sample(&mut out, name, &[("imdb_id", &f.imdb_id)], get(f));
-        }
-    }
-    family(
-        &mut out,
-        "tornas_torrent_piece_download_seconds",
-        "gauge",
-        "Average time to download one piece",
-    );
-    for f in &facts {
-        if let Some(s) = f.piece_download_secs_avg {
-            sample(
-                &mut out,
-                "tornas_torrent_piece_download_seconds",
-                &[("imdb_id", &f.imdb_id)],
-                format!("{s:.4}"),
-            );
-        }
-    }
-    family(
-        &mut out,
-        "tornas_torrent_eta_seconds",
-        "gauge",
-        "Estimated seconds to finish at the current rate",
-    );
-    for f in &facts {
-        if let Some(s) = f.eta_secs {
-            sample(
-                &mut out,
-                "tornas_torrent_eta_seconds",
-                &[("imdb_id", &f.imdb_id)],
-                s,
-            );
-        }
-    }
-    family(
-        &mut out,
-        "tornas_torrent_peers",
-        "gauge",
-        "Peers known to a torrent, by state",
-    );
-    for f in &facts {
-        for (state, n) in f.peers {
-            sample(
-                &mut out,
-                "tornas_torrent_peers",
-                &[("imdb_id", &f.imdb_id), ("state", state)],
-                n,
-            );
-        }
-    }
-    family(
-        &mut out,
-        "tornas_torrent_peers_live",
-        "gauge",
-        "Connected peers of a torrent, by transport",
-    );
-    for f in &facts {
-        for (transport, n) in f.peers_live_by_transport {
-            sample(
-                &mut out,
-                "tornas_torrent_peers_live",
-                &[("imdb_id", &f.imdb_id), ("transport", transport)],
-                n,
-            );
-        }
-    }
-    family(
-        &mut out,
-        "tornas_torrent_trackers",
-        "gauge",
-        "Trackers attached to a torrent, by URL scheme",
-    );
-    for f in &facts {
-        for (scheme, n) in &f.trackers_by_scheme {
-            sample(
-                &mut out,
-                "tornas_torrent_trackers",
-                &[("imdb_id", &f.imdb_id), ("scheme", scheme)],
-                n,
-            );
-        }
-    }
-
-    // ---- session, from the typed snapshot
-    let snap = engine.session.stats_snapshot();
-    family(
-        &mut out,
-        "tornas_fetched_bytes_total",
-        "counter",
-        "Bytes received from peers across all torrents",
-    );
-    sample(
-        &mut out,
-        "tornas_fetched_bytes_total",
-        &[],
-        snap.counters.fetched_bytes,
-    );
-    family(
-        &mut out,
-        "tornas_uploaded_bytes_total",
-        "counter",
-        "Bytes sent to peers across all torrents",
-    );
-    sample(
-        &mut out,
-        "tornas_uploaded_bytes_total",
-        &[],
-        snap.counters.uploaded_bytes,
-    );
-    family(
-        &mut out,
-        "tornas_blocked_connections_total",
-        "counter",
-        "Peer connections refused by the blocklist or allowlist",
-    );
-    sample(
-        &mut out,
-        "tornas_blocked_connections_total",
-        &[("direction", "incoming")],
-        snap.counters.blocked_incoming,
-    );
-    sample(
-        &mut out,
-        "tornas_blocked_connections_total",
-        &[("direction", "outgoing")],
-        snap.counters.blocked_outgoing,
-    );
-    gauge(
-        &mut out,
-        "tornas_download_bytes_per_second",
-        "Aggregate download rate",
-        snap.download_speed.as_bytes(),
-    );
-    gauge(
-        &mut out,
-        "tornas_upload_bytes_per_second",
-        "Aggregate upload rate",
-        snap.upload_speed.as_bytes(),
-    );
-    let p = &snap.peers;
-    family(
-        &mut out,
-        "tornas_peers",
-        "gauge",
-        "Peers across all torrents, by state",
-    );
-    for (state, n) in [
-        ("queued", p.queued),
-        ("connecting", p.connecting),
-        ("live", p.live),
-        ("seen", p.seen),
-        ("dead", p.dead),
-        ("not_needed", p.not_needed),
-    ] {
-        sample(&mut out, "tornas_peers", &[("state", state)], n);
-    }
-    family(
-        &mut out,
-        "tornas_peers_live",
-        "gauge",
-        "Connected peers across all torrents, by transport",
-    );
-    for (transport, n) in [
-        ("tcp", p.live_tcp),
-        ("utp", p.live_utp),
-        ("socks", p.live_socks),
-    ] {
-        sample(
-            &mut out,
-            "tornas_peers_live",
-            &[("transport", transport)],
-            n,
+    for (name, help, get) in per {
+        let get = *get;
+        g(
+            &mut kept,
+            name,
+            help,
+            Box::new(move |d, o| {
+                for f in &d.facts {
+                    o.observe(get(f), &[KeyValue::new("imdb_id", f.imdb_id.clone())]);
+                }
+            }),
         );
     }
-    family(
-        &mut out,
-        "tornas_peer_steals_total",
-        "counter",
-        "Pieces reassigned from a slow peer to a faster one",
-    );
-    sample(&mut out, "tornas_peer_steals_total", &[], p.steals);
-    family(
-        &mut out,
-        "tornas_peer_connections_total",
-        "counter",
-        "Outgoing peer connection attempts and their outcome, by transport and address family",
-    );
-    let c = &snap.connections;
-    for (transport, fam) in [("tcp", &c.tcp), ("utp", &c.utp), ("socks", &c.socks)] {
-        for (family_name, st) in [("v4", &fam.v4), ("v6", &fam.v6)] {
-            for (outcome, n) in [
-                ("attempt", st.attempts),
-                ("success", st.successes),
-                ("error", st.errors),
-            ] {
-                sample(
-                    &mut out,
-                    "tornas_peer_connections_total",
-                    &[
-                        ("transport", transport),
-                        ("family", family_name),
-                        ("outcome", outcome),
-                    ],
-                    n,
+    cnt(
+        &mut kept,
+        "tornas_torrent_fetched_bytes_total",
+        "Bytes received from peers this session, including discarded",
+        Box::new(|d, o| {
+            for f in &d.facts {
+                o.observe(
+                    f.fetched_bytes,
+                    &[KeyValue::new("imdb_id", f.imdb_id.clone())],
                 );
             }
-        }
-    }
+        }),
+    );
+    cnt(
+        &mut kept,
+        "tornas_torrent_uploaded_bytes_total",
+        "Bytes sent to peers this session",
+        Box::new(|d, o| {
+            for f in &d.facts {
+                o.observe(
+                    f.uploaded_bytes,
+                    &[KeyValue::new("imdb_id", f.imdb_id.clone())],
+                );
+            }
+        }),
+    );
+    g(
+        &mut kept,
+        "tornas_torrent_piece_download_seconds",
+        "Average time to download one piece",
+        Box::new(|d, o| {
+            for f in &d.facts {
+                if let Some(s) = f.piece_download_secs_avg {
+                    o.observe(s, &[KeyValue::new("imdb_id", f.imdb_id.clone())]);
+                }
+            }
+        }),
+    );
+    g(
+        &mut kept,
+        "tornas_torrent_eta_seconds",
+        "Estimated seconds to finish at the current rate",
+        Box::new(|d, o| {
+            for f in &d.facts {
+                if let Some(s) = f.eta_secs {
+                    o.observe(s as f64, &[KeyValue::new("imdb_id", f.imdb_id.clone())]);
+                }
+            }
+        }),
+    );
+    g(
+        &mut kept,
+        "tornas_torrent_peers",
+        "Peers known to a torrent, by state",
+        Box::new(|d, o| {
+            for f in &d.facts {
+                for (state, n) in f.peers {
+                    o.observe(
+                        n as f64,
+                        &[
+                            KeyValue::new("imdb_id", f.imdb_id.clone()),
+                            KeyValue::new("state", state),
+                        ],
+                    );
+                }
+            }
+        }),
+    );
+    g(
+        &mut kept,
+        "tornas_torrent_peers_live",
+        "Connected peers of a torrent, by transport",
+        Box::new(|d, o| {
+            for f in &d.facts {
+                for (transport, n) in f.peers_live_by_transport {
+                    o.observe(
+                        n as f64,
+                        &[
+                            KeyValue::new("imdb_id", f.imdb_id.clone()),
+                            KeyValue::new("transport", transport),
+                        ],
+                    );
+                }
+            }
+        }),
+    );
+    g(
+        &mut kept,
+        "tornas_torrent_trackers",
+        "Trackers attached to a torrent, by URL scheme",
+        Box::new(|d, o| {
+            for f in &d.facts {
+                for (scheme, n) in &f.trackers_by_scheme {
+                    o.observe(
+                        *n as f64,
+                        &[
+                            KeyValue::new("imdb_id", f.imdb_id.clone()),
+                            KeyValue::new("scheme", scheme.clone()),
+                        ],
+                    );
+                }
+            }
+        }),
+    );
 
-    // ---- DHT (UDP)
-    let dht = engine.dht_stats();
-    gauge(
-        &mut out,
+    // ---- session aggregates
+    cnt(
+        &mut kept,
+        "tornas_fetched_bytes_total",
+        "Bytes received from peers across all torrents",
+        Box::new(|d, o| o.observe(d.fetched_bytes, &[])),
+    );
+    cnt(
+        &mut kept,
+        "tornas_uploaded_bytes_total",
+        "Bytes sent to peers across all torrents",
+        Box::new(|d, o| o.observe(d.uploaded_bytes, &[])),
+    );
+    cnt(
+        &mut kept,
+        "tornas_blocked_connections_total",
+        "Peer connections refused by the blocklist or allowlist",
+        Box::new(|d, o| {
+            o.observe(
+                d.blocked_incoming,
+                &[KeyValue::new("direction", "incoming")],
+            );
+            o.observe(
+                d.blocked_outgoing,
+                &[KeyValue::new("direction", "outgoing")],
+            );
+        }),
+    );
+    g(
+        &mut kept,
+        "tornas_download_bytes_per_second",
+        "Aggregate download rate",
+        Box::new(|d, o| o.observe(d.download_bps as f64, &[])),
+    );
+    g(
+        &mut kept,
+        "tornas_upload_bytes_per_second",
+        "Aggregate upload rate",
+        Box::new(|d, o| o.observe(d.upload_bps as f64, &[])),
+    );
+    g(
+        &mut kept,
+        "tornas_peers",
+        "Peers across all torrents, by state",
+        Box::new(|d, o| {
+            for (state, n) in &d.peers {
+                o.observe(*n as f64, &[KeyValue::new("state", *state)]);
+            }
+        }),
+    );
+    g(
+        &mut kept,
+        "tornas_peers_live",
+        "Connected peers across all torrents, by transport",
+        Box::new(|d, o| {
+            for (transport, n) in &d.peers_live {
+                o.observe(*n as f64, &[KeyValue::new("transport", *transport)]);
+            }
+        }),
+    );
+    cnt(
+        &mut kept,
+        "tornas_peer_steals_total",
+        "Pieces reassigned from a slow peer to a faster one",
+        Box::new(|d, o| o.observe(d.steals, &[])),
+    );
+    cnt(
+        &mut kept,
+        "tornas_peer_connections_total",
+        "Outgoing peer connection attempts and outcome, by transport and address family",
+        Box::new(|d, o| {
+            for (transport, family, outcome, n) in &d.connections {
+                o.observe(
+                    *n,
+                    &[
+                        KeyValue::new("transport", *transport),
+                        KeyValue::new("family", *family),
+                        KeyValue::new("outcome", *outcome),
+                    ],
+                );
+            }
+        }),
+    );
+
+    // ---- DHT
+    g(
+        &mut kept,
         "tornas_dht_enabled",
         "1 when the DHT is running",
-        u8::from(dht.is_some()),
+        Box::new(|d, o| o.observe(f64::from(d.dht.is_some()), &[])),
     );
-    if let Some((v4, v6, outstanding)) = dht {
-        family(
-            &mut out,
-            "tornas_dht_nodes",
-            "gauge",
-            "Nodes in the DHT routing table, by address family",
-        );
-        sample(&mut out, "tornas_dht_nodes", &[("family", "v4")], v4);
-        sample(&mut out, "tornas_dht_nodes", &[("family", "v6")], v6);
-        gauge(
-            &mut out,
-            "tornas_dht_outstanding_requests",
-            "DHT queries awaiting a reply",
-            outstanding,
-        );
-    }
+    g(
+        &mut kept,
+        "tornas_dht_nodes",
+        "Nodes in the DHT routing table, by address family",
+        Box::new(|d, o| {
+            if let Some((v4, v6, _)) = d.dht {
+                o.observe(v4 as f64, &[KeyValue::new("family", "v4")]);
+                o.observe(v6 as f64, &[KeyValue::new("family", "v6")]);
+            }
+        }),
+    );
+    g(
+        &mut kept,
+        "tornas_dht_outstanding_requests",
+        "DHT queries awaiting a reply",
+        Box::new(|d, o| {
+            if let Some((_, _, out)) = d.dht {
+                o.observe(out as f64, &[]);
+            }
+        }),
+    );
 
     // ---- public tracker feed
-    let feed = engine.trackers.state();
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_trackers_enabled",
         "1 when the public tracker feed is on",
-        u8::from(engine.trackers.config.read().enabled),
+        Box::new(|d, o| o.observe(f64::from(d.trackers_enabled), &[])),
     );
-    let mut schemes: BTreeMap<String, u64> = BTreeMap::new();
-    for t in engine.trackers.current() {
-        if let Some(s) = t.split("://").next() {
-            *schemes.entry(s.to_owned()).or_default() += 1;
-        }
-    }
-    family(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_trackers_active",
-        "gauge",
         "Public trackers currently handed to new torrents, by URL scheme",
+        Box::new(|d, o| {
+            for (scheme, n) in &d.trackers_active {
+                o.observe(*n as f64, &[KeyValue::new("scheme", scheme.clone())]);
+            }
+        }),
     );
-    for (scheme, n) in &schemes {
-        sample(&mut out, "tornas_trackers_active", &[("scheme", scheme)], n);
-    }
-    if let Some(ts) = feed.updated_at {
-        gauge(
-            &mut out,
-            "tornas_tracker_list_age_seconds",
-            "Seconds since the tracker list was last refreshed successfully",
-            crate::utils::now_secs() - ts,
-        );
-    }
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
+        "tornas_tracker_list_age_seconds",
+        "Seconds since the tracker list was last refreshed successfully, or -1",
+        Box::new(|d, o| o.observe(d.tracker_list_age.unwrap_or(-1) as f64, &[])),
+    );
+    g(
+        &mut kept,
         "tornas_tracker_list_rejected",
-        "Entries dropped by the scheme filter, block list or IP rule in the last refresh",
-        feed.rejected,
+        "Entries dropped in the last refresh",
+        Box::new(|d, o| o.observe(d.tracker_rejected as f64, &[])),
     );
-    gauge(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_tracker_list_deduplicated",
-        "Duplicate entries collapsed in the last refresh",
-        feed.deduplicated,
+        "Duplicates collapsed in the last refresh",
+        Box::new(|d, o| o.observe(d.tracker_deduplicated as f64, &[])),
     );
-    family(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_tracker_source_up",
-        "gauge",
-        "1 when the last fetch of a tracker list source succeeded",
+        "1 when the last fetch of a tracker source succeeded",
+        Box::new(|d, o| {
+            for (name, up, _) in &d.tracker_sources {
+                o.observe(f64::from(*up), &[KeyValue::new("source", name.clone())]);
+            }
+        }),
     );
-    for s in &feed.sources {
-        let up = s.enabled && s.last_error.is_none() && s.last_ok_at.is_some();
-        sample(
-            &mut out,
-            "tornas_tracker_source_up",
-            &[("source", &s.name)],
-            u8::from(up),
-        );
-    }
-    family(
-        &mut out,
+    g(
+        &mut kept,
         "tornas_tracker_source_accepted",
-        "gauge",
         "Trackers a source contributed after filtering",
+        Box::new(|d, o| {
+            for (name, _, accepted) in &d.tracker_sources {
+                o.observe(*accepted as f64, &[KeyValue::new("source", name.clone())]);
+            }
+        }),
     );
-    for s in &feed.sources {
-        sample(
-            &mut out,
-            "tornas_tracker_source_accepted",
-            &[("source", &s.name)],
-            s.accepted,
-        );
-    }
 
-    Ok(out)
+    // ---- process (Linux)
+    g(
+        &mut kept,
+        "tornas_process_resident_memory_bytes",
+        "Resident memory",
+        Box::new(|_d, o| {
+            if let Some(kb) = proc_field("VmRSS:") {
+                o.observe((kb * 1024) as f64, &[]);
+            }
+        }),
+    );
+    g(
+        &mut kept,
+        "tornas_process_threads",
+        "OS threads",
+        Box::new(|_d, o| {
+            if let Some(n) = proc_field("Threads:") {
+                o.observe(n as f64, &[]);
+            }
+        }),
+    );
+    g(
+        &mut kept,
+        "tornas_process_open_fds",
+        "Open file descriptors (peer sockets count here)",
+        Box::new(|_d, o| {
+            if let Ok(rd) = std::fs::read_dir("/proc/self/fd") {
+                o.observe(rd.count() as f64, &[]);
+            }
+        }),
+    );
+
+    let _ = OBSERVERS.set(kept);
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn escapes_label_values() {
-        let mut out = String::new();
-        sample(&mut out, "m", &[("t", "a \"b\" \\c\nd")], 1);
-        assert_eq!(out, "m{t=\"a \\\"b\\\" \\\\c\\nd\"} 1\n");
-    }
-
-    #[test]
-    fn no_labels() {
-        let mut out = String::new();
-        sample(&mut out, "m", &[], 2.5);
-        assert_eq!(out, "m 2.5\n");
-    }
+fn proc_field(key: &str) -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    status
+        .lines()
+        .find(|l| l.starts_with(key))
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|v| v.parse().ok())
 }
