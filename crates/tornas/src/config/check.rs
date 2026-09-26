@@ -258,26 +258,9 @@ fn known_env() -> BTreeMap<String, Option<String>> {
     out
 }
 
-fn edit_distance(a: &str, b: &str) -> usize {
-    let b: Vec<char> = b.chars().collect();
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    for (i, ca) in a.chars().enumerate() {
-        let mut cur = vec![i + 1];
-        for (j, cb) in b.iter().enumerate() {
-            cur.push(
-                (prev[j] + usize::from(ca != *cb))
-                    .min(prev[j + 1] + 1)
-                    .min(cur[j] + 1),
-            );
-        }
-        prev = cur;
-    }
-    prev[b.len()]
-}
-
 pub fn suggest<'a>(key: &str, candidates: impl Iterator<Item = &'a String>) -> Option<&'a String> {
     candidates
-        .map(|c| (edit_distance(key, c), c))
+        .map(|c| (strsim::levenshtein(key, c), c))
         .filter(|(d, _)| *d <= 3)
         .min_by_key(|(d, _)| *d)
         .map(|(_, c)| c)

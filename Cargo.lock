@@ -4527,6 +4527,7 @@ dependencies = [
  "serde",
  "serde_ignored",
  "serde_json",
+ "strsim",
  "tempfile",
  "tokio",
  "tokio-util",
