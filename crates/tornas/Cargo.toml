@@ -44,7 +44,7 @@ opentelemetry-prometheus = "0.29"
 opentelemetry-appender-tracing = "0.29"
 tracing-opentelemetry = "0.30"
 prometheus = "0.14"
-nix = { version = "0.30", features = ["fs"] }
+nix = { version = "0.31", features = ["fs"] }
 mime_guess = { version = "2", default-features = false }
 parking_lot = "0.12"
 ratatui = "0.30"
