@@ -52,13 +52,17 @@ application in its own vocabulary:
   posters, genres, streams.
 - `mdns::advertise` takes a service type, a name and TXT records.
 
-The protocol modules deliberately do **not** share a media-library trait. DLNA and
-Stremio want different shapes, and one trait serving both would tie two unrelated
-protocols together. The duplication is a few structs; the coupling would be
-permanent.
+Each protocol still defines its own trait (`Browsable`, `CatalogHandler`, …) in its
+own vocabulary — that is what keeps the modules importing nothing from this crate.
+But the *app* feeds them all from one place: `media_catalog::Library`, which yields
+`MediaEntry` — the completed media as plain data (title, images, genres, the
+playable file). `MediaCatalog` implements `Library`.
 
-`adapters/` is the only code that knows both worlds. It implements
-`Browsable for Catalog` and the Stremio handlers for `Arc<Engine>`.
+`adapters/` is the only code that knows both worlds, and both adapters are the same
+shape: each wraps an `Arc<dyn Library>`, reads its `MediaEntry`s, and maps them to
+its protocol's type (`DlnaLibrary` → `MediaItem`, `StremioLibrary` → `Meta`/`Stream`).
+Neither touches the engine — a future Plex adapter is a third twin over the same
+`Library`.
 
 CI enforces the rule (see `.github/workflows/lint.yml`):
 
@@ -79,7 +83,7 @@ because it implements a trait from `upnp-serve`, which is a git dependency.
 main.rs → telemetry.rs, logging.rs → run_server (lib.rs, wiring)
   ├─→ service/ ──→ runs the components below                     (leaf: nothing from this crate)
   ├─→ http/ ────→ engine/ ─→ media_catalog (store + eviction + tmdb), schedule, trackers, tuning
-  ├─→ adapters/ ─→ engine/, media_catalog, and the three protocol modules
+  ├─→ adapters/ ─→ media_catalog (Library), and the protocol modules  (no engine)
   ├─→ stremio/, dlna/, mdns.rs                                   (leaves: nothing from this crate)
   ├─→ telemetry.rs, metrics.rs, logging.rs, utils/mount.rs
   └─→ cli/                        (speaks HTTP to a running server, not the engine)
