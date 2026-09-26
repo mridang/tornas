@@ -14,7 +14,8 @@ src/
   config.rs / config/  args (clap + TORNAS_* env), file (TOML), check (`config check`)
   cli/               the terminal commands: status, top, pause, doctor, health (an API client)
   engine/            the torrent engine; the only place that knows librqbit
-  catalog.rs         sqlite store: movies, torrents, events
+  media_catalog/      the library facade: the sqlite store, the pluggable
+                     eviction policy, and the TMDB client
   http/              the JSON API, the dashboard, /video, middleware, the source ACL
 
   service/           the generic runtime: components, signals, systemd  ← no crate:: imports
@@ -26,7 +27,6 @@ src/
   telemetry.rs       OpenTelemetry providers (meter always, OTLP traces/logs when configured)
   metrics.rs         the instruments; /metrics scrape and OTLP push
   logging.rs         tracing subscriber: journald under systemd, console otherwise, + OTLP
-  budget.rs          LRU eviction planner (pure)
   schedule.rs        weekly bandwidth windows (pure)
   trackers.rs        public tracker feed
   tmdb.rs            TMDB client
@@ -78,8 +78,8 @@ because it implements a trait from `upnp-serve`, which is a git dependency.
 ```
 main.rs → telemetry.rs, logging.rs → run_server (lib.rs, wiring)
   ├─→ service/ ──→ runs the components below                     (leaf: nothing from this crate)
-  ├─→ http/ ────→ engine/ ─→ catalog, budget, schedule, trackers, tmdb, tuning
-  ├─→ adapters/ ─→ engine/, catalog, and the three protocol modules
+  ├─→ http/ ────→ engine/ ─→ media_catalog (store + eviction + tmdb), schedule, trackers, tuning
+  ├─→ adapters/ ─→ engine/, media_catalog, and the three protocol modules
   ├─→ stremio/, dlna/, mdns.rs                                   (leaves: nothing from this crate)
   ├─→ telemetry.rs, metrics.rs, logging.rs, utils/mount.rs
   └─→ cli/                        (speaks HTTP to a running server, not the engine)
@@ -114,6 +114,32 @@ There is no `core` / `torrent` split. Abstracting librqbit behind a trait would
 mean inventing a whole BitTorrent client interface — `ManagedTorrentHandle`,
 `TorrentStats`, `AddTorrentOptions`, `Session::ratelimits`, per-file selection —
 to serve exactly one implementation.
+
+## The media library and eviction
+
+`media_catalog/` is the library facade. `MediaCatalog` owns three things — the
+SQLite `store`, the disk-`eviction` policy, and the TMDB client — and is built
+through a fluent builder so the whole subsystem is configured in one place:
+
+```rust
+MediaCatalog::builder(db_path)
+    .metadata(tmdb)
+    .eviction(Eviction::builder()
+        .budget(budget).min_free(min_free).protect_streamed(grace)
+        .strategy(Lru)
+        .build())
+    .build()?
+```
+
+Eviction is split into **planning** and **execution**. `EvictionPolicy`
+(`eviction/policy.rs`) is a pure trait — given candidates and a `Need`, it returns
+a `Plan`; `Lru` in `eviction/policies.rs` is the only strategy today, but the trait
+is why adding another is a new struct, not a rewrite. Executing a plan (removing
+torrents from the librqbit session, then forgetting the rows) needs librqbit, so it
+stays in `engine/eviction.rs`. The engine holds one `Arc<MediaCatalog>`, asks it
+`candidates()` and `plan()`, and carries out the result. That keeps librqbit out of
+the library and the store pure enough for the DLNA adapter to read directly
+(`impl Browsable for MediaCatalog`).
 
 ## `utils` holds two named leaves, not a grab-bag
 
