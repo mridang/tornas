@@ -4,17 +4,10 @@
 //! routes) and the runtime's [`Component`] trait. The runtime itself knows none of
 //! it.
 
-use std::{
-    net::IpAddr,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
-    time::Duration,
-};
+use std::{net::IpAddr, sync::Arc, time::Duration};
 
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::{
     config::ServerOpts,
@@ -23,16 +16,9 @@ use crate::{
     units,
 };
 
-static RELOAD: AtomicBool = AtomicBool::new(false);
-
-/// Called from the SIGHUP handler (and `systemctl reload`): refresh the tracker
-/// feed and re-announce. Picked up by the status loop within a few seconds.
-pub fn request_reload() {
-    RELOAD.store(true, Ordering::SeqCst);
-}
-
-/// Start everything and run until `cancel` fires.
-pub async fn run_server(opts: ServerOpts, cancel: CancellationToken) -> anyhow::Result<()> {
+/// Start everything and run until a termination signal arrives. The runtime owns
+/// signal handling: SIGTERM/SIGINT shut down, SIGHUP reloads.
+pub async fn run_server(opts: ServerOpts) -> anyhow::Result<()> {
     crate::metrics::install();
     let engine = Engine::start(opts.clone()).await?;
 
@@ -42,7 +28,7 @@ pub async fn run_server(opts: ServerOpts, cancel: CancellationToken) -> anyhow::
         .http_layer(crate::http::shared(engine.clone()))
         .add(crate::http::routes(engine.clone()))
         .add(crate::adapters::stremio::router(engine.clone()))
-        .add_opt(Dlna::start(&opts, &engine, &cancel).await)
+        .add_opt(Dlna::start(&opts, &engine).await)
         .add_opt(Mdns::from_opts(&opts))
         .add(EngineWorkers(engine.clone()))
         .add(Systemd::with_probe({
@@ -53,13 +39,32 @@ pub async fn run_server(opts: ServerOpts, cancel: CancellationToken) -> anyhow::
             engine: engine.clone(),
             interval,
             repo: opts.update_repo.clone(),
-            cancel: cancel.clone(),
         }));
+    svc.on_reload({
+        let e = engine.clone();
+        move || {
+            let e = e.clone();
+            async move { reload_trackers(&e).await }
+        }
+    });
     svc.on_shutdown({
         let e = engine.clone();
         move || async move { e.shutdown().await }
     });
-    svc.run(cancel).await
+    svc.run_until_signal().await
+}
+
+/// SIGHUP: refresh the tracker feed and re-announce running torrents.
+async fn reload_trackers(engine: &Arc<Engine>) {
+    match engine.trackers.refresh().await {
+        Ok(true) => {
+            if let Err(e) = engine.reannounce_active().await {
+                warn!("reload: re-announce failed: {e:#}");
+            }
+        }
+        Ok(false) => tracing::info!("reload: tracker list unchanged"),
+        Err(e) => warn!("reload: tracker refresh failed: {e:#}"),
+    }
 }
 
 /// The DLNA/UPnP media server: it contributes both an HTTP router (nested at
@@ -70,11 +75,7 @@ struct Dlna {
 }
 
 impl Dlna {
-    async fn start(
-        opts: &ServerOpts,
-        engine: &Arc<Engine>,
-        cancel: &CancellationToken,
-    ) -> Option<Self> {
+    async fn start(opts: &ServerOpts, engine: &Arc<Engine>) -> Option<Self> {
         if opts.disable_dlna {
             return None;
         }
@@ -90,7 +91,9 @@ impl Dlna {
             http_listen_port: opts.http_listen.port(),
             http_prefix: "/upnp".to_owned(),
             browse_provider: Box::new(crate::dlna::Directory::new(engine.catalog.clone())),
-            cancellation_token: cancel.child_token(),
+            // The SSDP task is aborted on shutdown by the runtime; this token only
+            // gives the server something to hold.
+            cancellation_token: CancellationToken::new(),
         })
         .await
         {
@@ -176,7 +179,6 @@ struct AutoUpdate {
     engine: Arc<Engine>,
     interval: Duration,
     repo: String,
-    cancel: CancellationToken,
 }
 
 impl Component for AutoUpdate {
@@ -185,12 +187,10 @@ impl Component for AutoUpdate {
             engine,
             interval,
             repo,
-            cancel,
         } = *self;
-        svc.spawn(
-            "auto-update",
-            crate::update::auto_update_forever(engine, interval, repo, cancel),
-        );
+        svc.task("auto-update", move |cancel| {
+            crate::update::auto_update_forever(engine, interval, repo, cancel)
+        });
     }
 }
 
@@ -200,17 +200,6 @@ async fn status_loop(engine: Arc<Engine>) {
     let mut tick = tokio::time::interval(Duration::from_secs(10));
     loop {
         tick.tick().await;
-        if RELOAD.swap(false, Ordering::SeqCst) {
-            match engine.trackers.refresh().await {
-                Ok(true) => {
-                    if let Err(e) = engine.reannounce_active().await {
-                        warn!("reload: re-announce failed: {e:#}");
-                    }
-                }
-                Ok(false) => info!("reload: tracker list unchanged"),
-                Err(e) => warn!("reload: tracker refresh failed: {e:#}"),
-            }
-        }
         if let Ok(st) = engine.status() {
             let downloading = st.movies.iter().filter(|m| !m.finished).count();
             let paused = match (st.pause.paused, st.pause.remaining_secs) {

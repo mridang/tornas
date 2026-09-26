@@ -40,4 +40,4 @@ pub mod tuning;
 pub mod units;
 pub mod update;
 
-pub use server::{request_reload, run_server};
+pub use server::run_server;
