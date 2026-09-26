@@ -6,8 +6,8 @@ use std::net::SocketAddr;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    budget::Candidate,
     catalog::{Event, Movie, TorrentRow},
+    media_catalog::eviction::Candidate,
     utils::{human_bytes, now_secs},
 };
 

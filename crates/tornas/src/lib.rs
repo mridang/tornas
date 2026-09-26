@@ -17,7 +17,6 @@ macro_rules! outln {
 }
 
 pub mod adapters;
-pub mod budget;
 pub mod catalog;
 pub mod cli;
 pub mod config;
@@ -27,6 +26,7 @@ pub mod fixtures;
 pub mod http;
 pub mod logging;
 pub mod mdns;
+pub mod media_catalog;
 pub mod metrics;
 pub mod schedule;
 pub mod service;

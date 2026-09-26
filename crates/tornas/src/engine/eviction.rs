@@ -8,7 +8,7 @@ use librqbit::api::TorrentIdOrHash;
 use tracing::{info, warn};
 
 use crate::{
-    budget::{self, Candidate},
+    media_catalog::eviction::{Candidate, EvictionPolicy, Lru, Need},
     utils::now_secs,
 };
 
@@ -47,7 +47,14 @@ impl Engine {
         let (disk_free, _) = crate::utils::mount::disk_usage(&self.torrents_dir)?;
         // Bytes that must be freed on disk to keep min_free after the incoming torrent lands.
         let extra = (incoming + self.opts.min_free).saturating_sub(disk_free);
-        let plan = budget::plan(&cands, used, incoming, self.opts.disk_budget, extra)
+        let need = Need {
+            used,
+            incoming,
+            limit: self.opts.disk_budget,
+            extra_needed: extra,
+        };
+        let plan = Lru
+            .select(&cands, need)
             .map_err(|e| fault(FaultKind::NoSpace, e.to_string()))?;
         for c in &plan.evict {
             self.evict(&c.key).await?;
