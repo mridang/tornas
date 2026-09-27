@@ -18,7 +18,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use serde_json::json;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::engine::Engine;
@@ -57,8 +56,14 @@ impl ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let body = json!({ "error": { "kind": self.kind, "message": self.message } });
-        (self.status, Json(body)).into_response()
+        // RFC 7807 problem+json. `type` carries the machine-readable kind, `title`
+        // the status's canonical reason, `detail` the specific message.
+        problemdetails::new(self.status)
+            .with_type(format!("/problems/{}", self.kind))
+            .with_title(self.status.canonical_reason().unwrap_or("Error"))
+            .with_detail(self.message)
+            .with_value("status", self.status.as_u16())
+            .into_response()
     }
 }
 

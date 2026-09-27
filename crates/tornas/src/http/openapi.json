@@ -133,7 +133,7 @@
           "404": {
             "description": "TMDB has no movie for that IMDb id",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
@@ -143,7 +143,7 @@
           "409": {
             "description": "Movie already in the library, or everything is paused",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
@@ -156,7 +156,7 @@
           "422": {
             "description": "Validation failed (bad imdb_id, magnet or JSON shape)",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
@@ -166,7 +166,7 @@
           "502": {
             "description": "TMDB unreachable or returned an error",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
@@ -176,7 +176,7 @@
           "507": {
             "description": "Cannot free enough space: everything evictable is protected, or the file exceeds the whole budget",
             "content": {
-              "application/json": {
+              "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 }
@@ -740,7 +740,7 @@
       "Error": {
         "description": "Error",
         "content": {
-          "application/json": {
+          "application/problem+json": {
             "schema": {
               "$ref": "#/components/schemas/Error"
             }
@@ -750,37 +750,42 @@
     },
     "schemas": {
       "Error": {
+        "description": "RFC 7807 problem detail, served as application/problem+json.",
         "type": "object",
         "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "kind": {
-                "type": "string",
-                "enum": [
-                  "not_found",
-                  "conflict",
-                  "invalid",
-                  "no_space",
-                  "upstream",
-                  "bad_request",
-                  "unsupported_media_type",
-                  "internal",
-                  "unauthorized"
-                ]
-              },
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "message"
+          "type": {
+            "type": "string",
+            "description": "Machine-readable problem kind, as a relative URI.",
+            "enum": [
+              "/problems/not_found",
+              "/problems/conflict",
+              "/problems/invalid",
+              "/problems/no_space",
+              "/problems/upstream",
+              "/problems/bad_request",
+              "/problems/unsupported_media_type",
+              "/problems/internal",
+              "/problems/unauthorized"
             ]
+          },
+          "title": {
+            "type": "string",
+            "description": "The HTTP status's canonical reason phrase."
+          },
+          "status": {
+            "type": "integer",
+            "description": "The HTTP status code."
+          },
+          "detail": {
+            "type": "string",
+            "description": "Human-readable explanation specific to this occurrence."
           }
         },
         "required": [
-          "error"
+          "type",
+          "title",
+          "status",
+          "detail"
         ]
       },
       "AddMovie": {

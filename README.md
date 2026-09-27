@@ -159,7 +159,7 @@ Everything binds dual-stack by default: HTTP on `[::]:3030`, BitTorrent and DHT 
 
 ## API
 
-JSON over HTTP. Writes need `Authorization: Bearer <TORNAS_API_TOKEN>` when a token is configured; reads are open. The full OpenAPI 3 document is served at `/api/openapi.json`; `/api` lists the resources. Errors are always `{"error": {"kind", "message"}}` with `kind` one of `not_found`, `conflict`, `invalid`, `no_space`, `upstream`, `bad_request`, `unsupported_media_type`, `unauthorized`, `internal`.
+JSON over HTTP. Writes need `Authorization: Bearer <TORNAS_API_TOKEN>` when a token is configured; reads are open. The full OpenAPI 3 document is served at `/api/openapi.json`; `/api` lists the resources. Errors are RFC 7807 problem details (`application/problem+json`): `{"type", "title", "status", "detail"}`, where `type` is a relative URI like `/problems/not_found` (one of `not_found`, `conflict`, `invalid`, `no_space`, `upstream`, `bad_request`, `unsupported_media_type`, `unauthorized`, `internal`).
 
 | Method | Path | |
 |---|---|---|
