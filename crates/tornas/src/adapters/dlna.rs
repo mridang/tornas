@@ -6,10 +6,8 @@
 
 use std::sync::Arc;
 
-use crate::{
-    dlna::{Browsable, MediaItem},
-    media_catalog::Library,
-};
+use crate::media_catalog::Library;
+use dlna::{Browsable, MediaItem};
 
 /// A DLNA view of the library.
 pub struct DlnaLibrary(pub Arc<dyn Library>);

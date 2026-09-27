@@ -88,7 +88,7 @@ impl Dlna {
             friendly_name: name,
             http_listen_port: opts.http_listen.port(),
             http_prefix: "/upnp".to_owned(),
-            browse_provider: Box::new(crate::dlna::Directory::new(std::sync::Arc::new(
+            browse_provider: Box::new(dlna::Directory::new(std::sync::Arc::new(
                 crate::adapters::dlna::DlnaLibrary(engine.library.clone()),
             ))),
             // The SSDP task is aborted on shutdown by the runtime; this token only

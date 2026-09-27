@@ -936,6 +936,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "dlna"
+version = "1.1.0"
+dependencies = [
+ "librqbit-upnp-serve",
+ "mime_guess",
+]
+
+[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4624,6 +4632,7 @@ dependencies = [
  "chrono",
  "clap",
  "crossterm",
+ "dlna",
  "futures",
  "gethostname",
  "http",

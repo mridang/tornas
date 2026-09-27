@@ -19,7 +19,6 @@ macro_rules! outln {
 pub mod adapters;
 pub mod cli;
 pub mod config;
-pub mod dlna;
 pub mod engine;
 pub mod fixtures;
 pub mod http;

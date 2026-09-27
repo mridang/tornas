@@ -1,0 +1,12 @@
+[package]
+name = "dlna"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+upnp-serve = { package = "librqbit-upnp-serve", git = "https://github.com/ikatson/rqbit", rev = "002a348" }
+mime_guess = { version = "2", default-features = false }
