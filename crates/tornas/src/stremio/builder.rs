@@ -253,9 +253,7 @@ impl AddonBuilder {
 mod tests {
     use super::*;
     use crate::stremio::handler::{CatalogRequest, Error, MetaRequest, Reply, StreamRequest};
-    use crate::stremio::model::{
-        CatalogResponse, ConfigFieldType, MetaResponse, StreamResponse,
-    };
+    use crate::stremio::model::{CatalogResponse, ConfigFieldType, MetaResponse, StreamResponse};
 
     struct Dummy;
     impl Handler for Dummy {
