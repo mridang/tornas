@@ -11,27 +11,18 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum ContentType {
     Movie,
-    Series,
-    Channel,
-    Tv,
 }
 
 impl ContentType {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Movie => "movie",
-            Self::Series => "series",
-            Self::Channel => "channel",
-            Self::Tv => "tv",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "movie" => Some(Self::Movie),
-            "series" => Some(Self::Series),
-            "channel" => Some(Self::Channel),
-            "tv" => Some(Self::Tv),
             _ => None,
         }
     }
@@ -79,16 +70,8 @@ pub struct Manifest {
     pub catalogs: Vec<CatalogDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub id_prefixes: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub config: Vec<ConfigField>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub background: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logo: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub contact_email: Option<String>,
-    #[serde(skip_serializing_if = "BehaviorHints::is_empty")]
-    pub behavior_hints: BehaviorHints,
 }
 
 /// A manifest `resources` entry: either the bare name, or the long form that
@@ -178,58 +161,6 @@ impl ExtraDef {
     pub fn options(mut self, options: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.options = options.into_iter().map(Into::into).collect();
         self
-    }
-}
-
-/// A user-data field, rendered by Stremio on the addon's configure page.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfigField {
-    pub key: String,
-    #[serde(rename = "type")]
-    pub field_type: ConfigFieldType,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub options: Vec<String>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub required: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ConfigFieldType {
-    Text,
-    Number,
-    Password,
-    Checkbox,
-    Select,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BehaviorHints {
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub adult: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub p2p: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub configurable: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub configuration_required: bool,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub epg_provider: bool,
-}
-
-impl BehaviorHints {
-    pub fn is_empty(&self) -> bool {
-        !self.adult
-            && !self.p2p
-            && !self.configurable
-            && !self.configuration_required
-            && !self.epg_provider
     }
 }
 
@@ -367,12 +298,6 @@ pub struct Video {
 pub enum StreamSource {
     #[serde(rename = "url")]
     Url(String),
-    #[serde(rename = "ytId")]
-    YouTube(String),
-    #[serde(rename = "infoHash")]
-    InfoHash(String),
-    #[serde(rename = "externalUrl")]
-    External(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -380,18 +305,11 @@ pub enum StreamSource {
 pub struct Stream {
     #[serde(flatten)]
     pub source: StreamSource,
-    /// Only meaningful alongside [`StreamSource::InfoHash`].
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub file_idx: Option<usize>,
     /// Usually the quality, e.g. `"1080p"`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub subtitles: Vec<Subtitle>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub sources: Vec<String>,
     #[serde(skip_serializing_if = "StreamBehaviorHints::is_empty")]
     pub behavior_hints: StreamBehaviorHints,
 }
@@ -400,11 +318,8 @@ impl Stream {
     pub fn new(source: StreamSource) -> Self {
         Self {
             source,
-            file_idx: None,
             name: None,
             description: None,
-            subtitles: Vec::new(),
-            sources: Vec::new(),
             behavior_hints: StreamBehaviorHints::default(),
         }
     }
@@ -425,10 +340,6 @@ pub struct StreamBehaviorHints {
     pub filename: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub video_size: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub video_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub country_whitelist: Vec<String>,
 }
 
 impl StreamBehaviorHints {
@@ -437,23 +348,7 @@ impl StreamBehaviorHints {
             && self.binge_group.is_none()
             && self.filename.is_none()
             && self.video_size.is_none()
-            && self.video_hash.is_none()
-            && self.country_whitelist.is_empty()
     }
-}
-
-// ---- subtitles and addon catalogs ------------------------------------------
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Subtitle {
-    pub id: String,
-    pub url: String,
-    /// ISO 639-2.
-    pub lang: String,
-    /// Overrides the displayed language name, e.g. `"English [CC]"`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
 }
 
 // ---- responses -------------------------------------------------------------
@@ -513,15 +408,6 @@ mod tests {
         assert!(v.get("infoHash").is_none());
         assert_eq!(v["behaviorHints"]["filename"], "shawshank.mp4");
         assert!(v["behaviorHints"].get("notWebReady").is_none());
-
-        let torrent = Stream {
-            file_idx: Some(0),
-            ..Stream::new(StreamSource::InfoHash("abc123".into()))
-        };
-        let v = serde_json::to_value(&torrent).unwrap();
-        assert_eq!(v["infoHash"], "abc123");
-        assert_eq!(v["fileIdx"], 0);
-        assert!(v.get("url").is_none());
     }
 
     #[test]
@@ -540,7 +426,7 @@ mod tests {
     }
 
     #[test]
-    fn behaviour_hints_disappear_when_unset() {
+    fn empty_id_prefixes_are_omitted() {
         let m = Manifest {
             id: "org.example".into(),
             name: "Example".into(),
@@ -550,14 +436,9 @@ mod tests {
             types: vec![ContentType::Movie],
             catalogs: vec![],
             id_prefixes: vec![],
-            config: vec![],
-            background: None,
             logo: None,
-            contact_email: None,
-            behavior_hints: BehaviorHints::default(),
         };
         let v = serde_json::to_value(&m).unwrap();
-        assert!(v.get("behaviorHints").is_none());
         assert!(v.get("idPrefixes").is_none());
     }
 }

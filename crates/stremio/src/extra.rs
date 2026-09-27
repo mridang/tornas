@@ -58,24 +58,6 @@ impl Extra {
     pub fn skip(&self) -> Option<usize> {
         self.get("skip")?.parse().ok()
     }
-
-    /// The UTC day (`YYYY-MM-DD`) an EPG catalogue was asked for.
-    pub fn date(&self) -> Option<&str> {
-        self.get("date").filter(|s| !s.is_empty())
-    }
-
-    /// Subtitle matching hints.
-    pub fn video_hash(&self) -> Option<&str> {
-        self.get("videoHash")
-    }
-
-    pub fn video_size(&self) -> Option<u64> {
-        self.get("videoSize")?.parse().ok()
-    }
-
-    pub fn filename(&self) -> Option<&str> {
-        self.get("filename")
-    }
 }
 
 /// Percent-decoding, applied per key and per value once they are already split.
@@ -139,7 +121,7 @@ mod tests {
 
     #[test]
     fn keys_are_decoded_too() {
-        assert_eq!(Extra::parse("vide%6fHash=abc").video_hash(), Some("abc"));
+        assert_eq!(Extra::parse("sear%63h=abc").search(), Some("abc"));
     }
 
     #[test]

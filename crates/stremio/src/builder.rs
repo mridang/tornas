@@ -15,9 +15,7 @@
 //! ```
 
 use super::handler::Handler;
-use super::model::{
-    BehaviorHints, CatalogDef, ConfigField, ContentType, Manifest, Resource, ResourceEntry,
-};
+use super::model::{CatalogDef, ContentType, Manifest, Resource, ResourceEntry};
 
 /// A finished addon: the manifest plus the one handler behind it.
 pub struct Addon<H> {
@@ -29,18 +27,6 @@ impl<H> Addon<H> {
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
     }
-
-    /// The manifest as served under a user-data URL. Stremio refuses to install an
-    /// addon that still says it needs configuring, so those hints come off once the
-    /// user has configured it.
-    pub fn manifest_for(&self, config: Option<&str>) -> Manifest {
-        let mut m = self.manifest.clone();
-        if config.is_some() {
-            m.behavior_hints.configurable = false;
-            m.behavior_hints.configuration_required = false;
-        }
-        m
-    }
 }
 
 #[derive(Debug)]
@@ -51,9 +37,6 @@ pub enum BuildError {
     NoTypes,
     /// A catalogue declares a type the addon does not serve.
     UnknownCatalogType(String),
-    /// `config` fields exist but nothing marks the addon configurable, so Stremio
-    /// would never show the button.
-    ConfigWithoutButton,
 }
 
 impl std::fmt::Display for BuildError {
@@ -64,11 +47,6 @@ impl std::fmt::Display for BuildError {
             Self::UnknownCatalogType(t) => {
                 write!(f, "catalog {t} has a type this addon does not serve")
             }
-            Self::ConfigWithoutButton => write!(
-                f,
-                "manifest.config is set but behaviorHints.configurable is not, so Stremio \
-                 would never show the configure button"
-            ),
         }
     }
 }
@@ -85,11 +63,7 @@ pub struct AddonBuilder {
     types: Vec<ContentType>,
     id_prefixes: Vec<String>,
     catalogs: Vec<CatalogDef>,
-    config: Vec<ConfigField>,
-    behavior_hints: BehaviorHints,
     logo: Option<String>,
-    background: Option<String>,
-    contact_email: Option<String>,
     meta_types: Vec<ContentType>,
     stream_types: Vec<ContentType>,
 }
@@ -124,26 +98,6 @@ impl AddonBuilder {
 
     pub fn logo(mut self, url: impl Into<String>) -> Self {
         self.logo = Some(url.into());
-        self
-    }
-
-    pub fn background(mut self, url: impl Into<String>) -> Self {
-        self.background = Some(url.into());
-        self
-    }
-
-    pub fn contact_email(mut self, email: impl Into<String>) -> Self {
-        self.contact_email = Some(email.into());
-        self
-    }
-
-    pub fn behavior_hints(mut self, h: BehaviorHints) -> Self {
-        self.behavior_hints = h;
-        self
-    }
-
-    pub fn config(mut self, fields: impl IntoIterator<Item = ConfigField>) -> Self {
-        self.config = fields.into_iter().collect();
         self
     }
 
@@ -221,12 +175,6 @@ impl AddonBuilder {
         {
             return Err(BuildError::UnknownCatalogType(c.id.clone()));
         }
-        let needs_button = !self.config.is_empty();
-        let has_button =
-            self.behavior_hints.configurable || self.behavior_hints.configuration_required;
-        if needs_button && !has_button {
-            return Err(BuildError::ConfigWithoutButton);
-        }
 
         Ok(Addon {
             manifest: Manifest {
@@ -238,11 +186,7 @@ impl AddonBuilder {
                 types: self.types,
                 catalogs: self.catalogs,
                 id_prefixes: self.id_prefixes,
-                config: self.config,
-                background: self.background,
                 logo: self.logo,
-                contact_email: self.contact_email,
-                behavior_hints: self.behavior_hints,
             },
             handler,
         })
@@ -253,7 +197,7 @@ impl AddonBuilder {
 mod tests {
     use super::*;
     use crate::handler::{CatalogRequest, Error, MetaRequest, Reply, StreamRequest};
-    use crate::model::{CatalogResponse, ConfigFieldType, MetaResponse, StreamResponse};
+    use crate::model::{CatalogResponse, MetaResponse, StreamResponse};
 
     struct Dummy;
     impl Handler for Dummy {
@@ -290,59 +234,12 @@ mod tests {
     }
 
     #[test]
-    fn a_configured_url_may_be_installed() {
-        let addon = base()
-            .config([ConfigField {
-                key: "token".into(),
-                field_type: ConfigFieldType::Password,
-                default: None,
-                title: Some("API token".into()),
-                options: vec![],
-                required: true,
-            }])
-            .behavior_hints(BehaviorHints {
-                configuration_required: true,
-                ..Default::default()
-            })
-            .stream([ContentType::Movie])
-            .build(Dummy)
-            .unwrap();
-        assert!(addon.manifest().behavior_hints.configuration_required);
-        let configured = addon.manifest_for(Some("abc123"));
-        assert!(
-            !configured.behavior_hints.configuration_required,
-            "a configured instance must look installable"
-        );
-    }
-
-    #[test]
-    fn refuses_manifests_stremio_would_reject() {
+    fn a_missing_field_is_refused() {
         assert!(matches!(
             AddonBuilder::new("", "Example", "1.0.0")
                 .description("d")
                 .build(Dummy),
             Err(BuildError::MissingField("id"))
-        ));
-        assert!(matches!(
-            base()
-                .types([ContentType::Series])
-                .catalogs([CatalogDef::new(ContentType::Movie, "local", "Local")])
-                .build(Dummy),
-            Err(BuildError::UnknownCatalogType(_))
-        ));
-        assert!(matches!(
-            base()
-                .config([ConfigField {
-                    key: "k".into(),
-                    field_type: ConfigFieldType::Text,
-                    default: None,
-                    title: None,
-                    options: vec![],
-                    required: false,
-                }])
-                .stream([ContentType::Movie])
-                .build(Dummy),
-            Err(BuildError::ConfigWithoutButton)
         ));
     }
 }

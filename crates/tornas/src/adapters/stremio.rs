@@ -125,7 +125,6 @@ fn stream_for(e: &MediaEntry, base_url: &str) -> Stream {
             filename: Some(e.file_name.clone()),
             video_size: Some(e.file_size),
             binge_group: Some("tornas".to_owned()),
-            ..Default::default()
         },
         ..Stream::new(StreamSource::Url(format!("{base_url}{}", e.video_path())))
     }
