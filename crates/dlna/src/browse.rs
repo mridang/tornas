@@ -8,7 +8,7 @@ use upnp_serve::services::content_directory::{
     browse::response::{Container, Item, ItemOrContainer},
 };
 
-use super::library::Browsable;
+use super::handler::Browsable;
 
 const ROOT: usize = 0;
 
