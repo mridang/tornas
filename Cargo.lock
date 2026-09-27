@@ -4638,7 +4638,7 @@ dependencies = [
  "axum-extra 0.12.6",
  "axum-range",
  "axum-server",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "clap",
  "crossterm",
