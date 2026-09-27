@@ -31,8 +31,6 @@ struct Cached {
     facts: Vec<TorrentFacts>,
     fetched_bytes: u64,
     uploaded_bytes: u64,
-    blocked_incoming: u64,
-    blocked_outgoing: u64,
     download_bps: u64,
     upload_bps: u64,
     peers: Vec<(&'static str, u64)>,
@@ -118,8 +116,6 @@ impl Snapshot {
         Cached {
             fetched_bytes: snap.counters.fetched_bytes,
             uploaded_bytes: snap.counters.uploaded_bytes,
-            blocked_incoming: snap.counters.blocked_incoming,
-            blocked_outgoing: snap.counters.blocked_outgoing,
             download_bps: snap.download_speed.as_bytes(),
             upload_bps: snap.upload_speed.as_bytes(),
             peers: vec![
@@ -642,21 +638,6 @@ pub fn observe(engine: Arc<Engine>) {
         "tornas_uploaded_bytes_total",
         "Bytes sent to peers across all torrents",
         Box::new(|d, o| o.observe(d.uploaded_bytes, &[])),
-    );
-    cnt(
-        &mut kept,
-        "tornas_blocked_connections_total",
-        "Peer connections refused by the blocklist or allowlist",
-        Box::new(|d, o| {
-            o.observe(
-                d.blocked_incoming,
-                &[KeyValue::new("direction", "incoming")],
-            );
-            o.observe(
-                d.blocked_outgoing,
-                &[KeyValue::new("direction", "outgoing")],
-            );
-        }),
     );
     g(
         &mut kept,

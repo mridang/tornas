@@ -27,7 +27,6 @@ pub mod metrics;
 pub mod o11y;
 pub mod schedule;
 pub use service::systemd;
-pub mod peerlist;
 pub mod server;
 pub mod tmdb;
 pub mod trackers;

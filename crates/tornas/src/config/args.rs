@@ -100,16 +100,6 @@ pub struct ServerOpts {
     #[arg(long, env = "TORNAS_UTP")]
     pub utp: bool,
 
-    /// Refuse peers in these address ranges: an http(s) URL or a local file, plain
-    /// or gzip. Downloaded lists are cached, so an offline boot uses the last copy.
-    #[arg(long, env = "TORNAS_PEER_BLOCKLIST")]
-    pub peer_blocklist: Option<String>,
-
-    /// Only talk to peers in these address ranges: an http(s) URL or a local file.
-    /// If it cannot be loaded and there is no cached copy, the server does not start.
-    #[arg(long, env = "TORNAS_PEER_ALLOWLIST")]
-    pub peer_allowlist: Option<String>,
-
     /// Maximum peers per torrent. Lower it on low-memory boards (e.g. 40 on a
     /// Raspberry Pi 3 or Zero 2). Individual movies can override it through the API.
     #[arg(long, env = "TORNAS_PEER_LIMIT", default_value = "128", value_parser = clap::value_parser!(u32).range(1..))]

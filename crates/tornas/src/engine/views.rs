@@ -414,12 +414,6 @@ impl Engine {
                 "no TMDB credentials configured: movies are catalogued by IMDb id only".into(),
             );
         }
-        if let Some(n) = &self.blocklist.note {
-            out.push(format!("peer blocklist: {n}"));
-        }
-        if let Some(n) = &self.allowlist.note {
-            out.push(format!("peer allowlist: {n}"));
-        }
         out
     }
 }

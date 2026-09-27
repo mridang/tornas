@@ -21,7 +21,6 @@ use tracing::{debug, info, warn};
 use crate::{
     config::ServerOpts,
     media_catalog::{MediaCatalog, TorrentRow},
-    peerlist::{IpListStatus, PeerList},
     tmdb::Tmdb,
     trackers::TrackerFeed,
 };
@@ -87,16 +86,6 @@ impl Engine {
         } else {
             (std::net::Ipv4Addr::UNSPECIFIED, listen_port).into()
         };
-        let blocklist = IpListStatus::prepare(
-            opts.peer_blocklist.as_deref().and_then(PeerList::blocklist),
-            &data_dir.join("peer-blocklist.cache"),
-        )
-        .await?;
-        let allowlist = IpListStatus::prepare(
-            opts.peer_allowlist.as_deref().and_then(PeerList::allowlist),
-            &data_dir.join("peer-allowlist.cache"),
-        )
-        .await?;
         // A router port mapping points at the LAN address, which is not where traffic
         // flows once it is bound to a VPN interface.
         let upnp = !opts.disable_upnp_port_forward && opts.bind_device.is_none();
@@ -136,8 +125,6 @@ impl Engine {
             bind_device_name: opts.bind_device.clone(),
             ipv4_only: !ipv6,
             disable_local_service_discovery: opts.disable_lsd,
-            blocklist_url: blocklist.loaded_from.clone(),
-            allowlist_url: allowlist.loaded_from.clone(),
             peer_limit: Some(opts.peer_limit as usize),
             concurrent_init_limit: Some(opts.concurrent_checks as usize),
             ratelimits: LimitsConfig {
@@ -168,8 +155,6 @@ impl Engine {
             pause: parking_lot::Mutex::new(pause0),
             disk_missing: std::sync::atomic::AtomicBool::new(false),
             add_lock: tokio::sync::Mutex::new(()),
-            blocklist,
-            allowlist,
             bandwidth: crate::schedule::compile(&file_config_bandwidth)?,
             bandwidth_active: parking_lot::Mutex::new(None),
         });

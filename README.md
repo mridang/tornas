@@ -97,8 +97,6 @@ Settings passed to librqbit when it starts. Defaults suit a home connection; cha
 |---|---|---|---|
 | `--bind-device` | `TORNAS_BIND_DEVICE` | | send all torrent traffic through one interface, e.g. `wg0` for a VPN. If the interface is missing the server does not start (so nothing leaks), and router port forwarding is turned off |
 | `--utp` | `TORNAS_UTP` | off | also accept and make uTP (BitTorrent over UDP) connections |
-| `--peer-blocklist` | `TORNAS_PEER_BLOCKLIST` | | IP list (P2P or CIDR format, file or http(s) URL, `.gz` fine) of peers never to talk to. Downloaded at start and cached; if it cannot be fetched and there is no cached copy, the server starts without it and warns |
-| `--peer-allowlist` | `TORNAS_PEER_ALLOWLIST` | | only ever talk to peers on this list. Unlike the blocklist, a missing list stops the server from starting |
 | `--peer-limit` | `TORNAS_PEER_LIMIT` | 128 | peers per torrent; each movie can override it. Lower it on low-memory boards |
 | `--concurrent-checks` | `TORNAS_CONCURRENT_CHECKS` | 3 | torrents hash-checked at once after a restart. Lower it on low-memory boards |
 | `--announce-port` | `TORNAS_ANNOUNCE_PORT` | the listen port | port told to trackers and DHT, when a router forwards a different one |
@@ -106,7 +104,7 @@ Settings passed to librqbit when it starts. Defaults suit a home connection; cha
 | `--dht-bootstrap` | `TORNAS_DHT_BOOTSTRAP` | librqbit's list | comma-separated `host:port` nodes to join the DHT through |
 | `--disable-lsd` | `TORNAS_LSD_DISABLE` | off | stop finding peers on the LAN by multicast (BEP 14) |
 
-On low-memory boards (Pi 3, Pi Zero 2, 1 GB Orange Pi) set `--peer-limit 40` and `--concurrent-checks 1` to keep memory down; the defaults suit boards with more RAM. `GET /api/config` shows the values in force under `engine`, along with the state of the peer lists.
+On low-memory boards (Pi 3, Pi Zero 2, 1 GB Orange Pi) set `--peer-limit 40` and `--concurrent-checks 1` to keep memory down; the defaults suit boards with more RAM. `GET /api/config` shows the values in force under `engine`.
 
 ### Per-movie limits
 
@@ -302,7 +300,7 @@ Per-torrent series carry only an `imdb_id` label; the descriptive fields (info h
 | Disk budget | `tornas_budget_limit_bytes`, `tornas_budget_used_bytes`, `tornas_budget_min_free_bytes`, `tornas_disk_free_bytes`, `tornas_disk_total_bytes`, `tornas_disk_below_min_free`, `tornas_warnings` |
 | Library | `tornas_movies`, `tornas_movies_protected`, `tornas_torrents{private}`, `tornas_torrents_size_bytes{private}`, `tornas_torrents_by_state{state}` |
 | Per torrent | `tornas_torrent_info`, `_size_bytes` (all files), `_selected_bytes` (the video), `_progress_bytes`, `_progress_ratio`, `_piece_length_bytes`, `_pieces`, `_pieces_verified`, `_files`, `_fetched_bytes_total`, `_uploaded_bytes_total`, `_download_bytes_per_second`, `_upload_bytes_per_second`, `_piece_download_seconds`, `_eta_seconds`, `_idle_seconds`, `_peers{state}`, `_peers_live{transport}`, `_trackers{scheme}` |
-| Peers and transfer | `tornas_fetched_bytes_total`, `tornas_uploaded_bytes_total`, `tornas_download_bytes_per_second`, `tornas_upload_bytes_per_second`, `tornas_peers{state}`, `tornas_peers_live{transport}`, `tornas_peer_connections_total{transport,family,outcome}`, `tornas_peer_steals_total`, `tornas_blocked_connections_total{direction}` |
+| Peers and transfer | `tornas_fetched_bytes_total`, `tornas_uploaded_bytes_total`, `tornas_download_bytes_per_second`, `tornas_upload_bytes_per_second`, `tornas_peers{state}`, `tornas_peers_live{transport}`, `tornas_peer_connections_total{transport,family,outcome}`, `tornas_peer_steals_total` |
 | DHT (UDP) | `tornas_dht_enabled`, `tornas_dht_nodes{family}`, `tornas_dht_outstanding_requests` |
 | Tracker feed | `tornas_trackers_enabled`, `tornas_trackers_active{scheme}`, `tornas_tracker_list_age_seconds`, `tornas_tracker_list_rejected`, `tornas_tracker_list_deduplicated`, `tornas_tracker_source_up{source}`, `tornas_tracker_source_accepted{source}` |
 | Pause and disk | `tornas_paused`, `tornas_paused_for_missing_disk`, `tornas_data_disk_mounted`, `tornas_pause_remaining_seconds`, `tornas_pauses_total`, `tornas_resumes_total{trigger}` |

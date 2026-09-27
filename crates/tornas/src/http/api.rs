@@ -189,8 +189,6 @@ pub(super) async fn api_config(State(e): State<AppState>) -> impl IntoResponse {
             "local_discovery": !e.opts.disable_lsd,
             "peer_limit": e.opts.peer_limit,
             "concurrent_checks": e.opts.concurrent_checks,
-            "blocklist": e.blocklist,
-            "allowlist": e.allowlist,
         },
     }))
 }
