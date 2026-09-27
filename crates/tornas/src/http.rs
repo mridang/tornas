@@ -4,10 +4,10 @@
 //! This file owns only the shared plumbing — application state, the error envelope,
 //! and the route table. Handlers live in the submodules.
 
+pub mod acl;
 pub mod api;
 pub mod dashboard;
 pub mod middleware;
-pub mod netacl;
 pub mod video;
 
 use std::sync::Arc;
@@ -174,6 +174,9 @@ pub fn shared(engine: AppState) -> impl FnOnce(Router) -> Router {
             .allow_methods(Any)
             .allow_headers(Any)
             .expose_headers(Any);
+        // The ACL gate carries its own Acl as state; the token gate needs the engine
+        // (for the configured token).
+        let acl = engine.acl.clone();
         // Inside the source-address check (refused requests have their own counter)
         // and after routing (so the route template is known): token, then timing,
         // then CORS, then the private-network preflight, then the ACL outermost.
@@ -185,7 +188,7 @@ pub fn shared(engine: AppState) -> impl FnOnce(Router) -> Router {
         .layer(cors)
         .layer(axum::middleware::from_fn(allow_private_network))
         .layer(axum::middleware::from_fn_with_state(
-            engine,
+            acl,
             require_allowed_source,
         ))
     }

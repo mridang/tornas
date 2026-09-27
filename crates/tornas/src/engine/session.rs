@@ -54,7 +54,7 @@ impl Engine {
                 report.errors.join("\n  ")
             );
         }
-        let acl = crate::http::netacl::Acl::new(
+        let acl = crate::http::acl::Acl::new(
             &file_config.network.allow_from,
             &file_config.network.trusted_proxies,
         )?;

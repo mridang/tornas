@@ -85,8 +85,7 @@ pub fn validate_file_config(fc: &FileConfig) -> Report {
     if fc.network.allow_from.is_empty() {
         r.err("network.allow_from is empty, so nothing could reach the server; use [\"0.0.0.0/0\", \"::/0\"] to allow every address");
     }
-    if let Err(e) =
-        crate::http::netacl::Acl::new(&fc.network.allow_from, &fc.network.trusted_proxies)
+    if let Err(e) = crate::http::acl::Acl::new(&fc.network.allow_from, &fc.network.trusted_proxies)
     {
         r.err(format!("network: {e:#}"));
     }

@@ -41,7 +41,7 @@ pub struct Engine {
     pub library: Arc<MediaCatalog>,
     pub opts: ServerOpts,
     pub file_config: FileConfig,
-    pub acl: crate::http::netacl::Acl,
+    pub acl: crate::http::acl::Acl,
     pub trackers: TrackerFeed,
     pub torrents_dir: PathBuf,
     /// Saved .torrent files for movies added from a file rather than a magnet.

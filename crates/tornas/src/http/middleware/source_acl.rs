@@ -9,14 +9,14 @@ use axum::{
     response::{IntoResponse, Response},
 };
 
-use crate::http::{ApiError, AppState};
+use crate::http::{ApiError, acl::Acl};
 
 pub(in crate::http) async fn require_allowed_source(
-    State(e): State<AppState>,
+    State(acl): State<Acl>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    if e.acl.allows_everything() {
+    if acl.allows_everything() {
         return next.run(req).await;
     }
     let peer = req
@@ -31,8 +31,8 @@ pub(in crate::http) async fn require_allowed_source(
         .headers()
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok());
-    let client = e.acl.client_ip(peer, xff);
-    if e.acl.allows(client) {
+    let client = acl.client_ip(peer, xff);
+    if acl.allows(client) {
         return next.run(req).await;
     }
     tracing::debug!(%client, path = %req.uri().path(), "refused: source address not allowed");
