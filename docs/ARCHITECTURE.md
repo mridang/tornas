@@ -26,7 +26,7 @@ src/
 
   telemetry.rs       OpenTelemetry providers (meter always, OTLP traces/logs when configured)
   metrics.rs         the instruments; /metrics scrape and OTLP push
-  logging.rs         tracing subscriber: journald under systemd, console otherwise, + OTLP
+  logging.rs         tracing subscriber: stdout (systemd/Docker capture it) + OTLP
   schedule.rs        weekly bandwidth windows (pure)
   trackers.rs        public tracker feed
   tmdb.rs            TMDB client
@@ -102,9 +102,9 @@ also pushed to a collector over OTLP/gRPC.
 `metrics.rs` holds the instruments. Event counters and the HTTP histogram are
 synchronous; everything describing current state is an **observable** instrument
 whose callback reads typed engine data at collection time, so there is no
-hand-written text exposition. `logging.rs` builds the `tracing` subscriber:
-journald under systemd (structured fields, journald owns retention), a console
-layer otherwise, plus OTLP log and span layers when export is on.
+hand-written text exposition. `logging.rs` builds the `tracing` subscriber: a
+console layer to stdout (systemd/journald or Docker capture it and own retention),
+plus OTLP log and span layers when export is on.
 
 ## Why the engine is one module with many files
 

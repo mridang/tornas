@@ -1,7 +1,5 @@
-//! Logging. Under systemd the daemon logs to journald with structured fields;
-//! otherwise (interactive use, dev, non-systemd hosts) it logs to the console. When
-//! OTLP export is on, logs and spans are also sent to the collector. Retention and
-//! rotation are journald's job; remote shipping is the collector's.
+//! Logging. The daemon logs to stdout; systemd (journald) or Docker capture it and
+//! own retention. When OTLP export is on, logs and spans also go to the collector.
 
 use anyhow::anyhow;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
@@ -15,21 +13,6 @@ use crate::telemetry::Telemetry;
 pub fn init(filter: &str, telemetry: &Telemetry) -> anyhow::Result<()> {
     let env_filter = EnvFilter::try_new(filter).unwrap_or_else(|_| EnvFilter::new("info"));
 
-    // Exactly one of these is `Some`; `Option<Layer>` is a no-op when `None`, so the
-    // whole stack composes without boxing or naming intermediate subscriber types.
-    // Prefer journald under systemd (it captures structured fields and owns
-    // retention, and stdout would double up); the console is for everywhere else.
-    let (journald, console) = match crate::service::systemd::is_managed()
-        .then(tracing_journald::layer)
-        .and_then(Result::ok)
-    {
-        Some(journald) => (Some(journald), None),
-        None => (
-            None,
-            Some(tracing_subscriber::fmt::layer().with_target(false)),
-        ),
-    };
-
     let spans = telemetry
         .tracer()
         .map(|tracer| tracing_opentelemetry::layer().with_tracer(tracer));
@@ -39,8 +22,7 @@ pub fn init(filter: &str, telemetry: &Telemetry) -> anyhow::Result<()> {
 
     tracing_subscriber::registry()
         .with(env_filter)
-        .with(journald)
-        .with(console)
+        .with(tracing_subscriber::fmt::layer().with_target(false))
         .with(spans)
         .with(logs)
         .try_init()
