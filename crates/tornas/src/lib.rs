@@ -31,10 +31,10 @@ pub mod schedule;
 pub mod service;
 pub mod stremio;
 pub use service::systemd;
+pub mod peerlist;
 pub mod server;
 pub mod tmdb;
 pub mod trackers;
-pub mod tuning;
 pub mod utils;
 
 pub use server::run_server;

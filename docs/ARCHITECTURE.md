@@ -29,7 +29,7 @@ src/
   schedule.rs        weekly bandwidth windows (pure)
   trackers.rs        public tracker feed
   tmdb.rs            TMDB client
-  tuning.rs          small-board defaults, peer list fetch and cache
+  peerlist.rs        peer block/allow lists: fetch and cache
   fixtures.rs        test fixture generator and seeder
 ```
 
@@ -81,7 +81,7 @@ because it implements a trait from `upnp-serve`, which is a git dependency.
 ```
 main.rs → o11y.rs → run_server (lib.rs, wiring)
   ├─→ service/ ──→ runs the components below                     (leaf: nothing from this crate)
-  ├─→ http/ ────→ engine/ ─→ media_catalog (store + eviction + tmdb), schedule, trackers, tuning
+  ├─→ http/ ────→ engine/ ─→ media_catalog (store + eviction + tmdb), schedule, trackers, peerlist
   ├─→ adapters/ ─→ media_catalog (Library), and the protocol modules  (no engine)
   ├─→ stremio/, dlna/, mdns.rs                                   (leaves: nothing from this crate)
   ├─→ o11y.rs, metrics.rs, utils/mount.rs

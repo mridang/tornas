@@ -110,15 +110,15 @@ pub struct ServerOpts {
     #[arg(long, env = "TORNAS_PEER_ALLOWLIST")]
     pub peer_allowlist: Option<String>,
 
-    /// Maximum peers per torrent. Defaults to 128, or 40 on boards with about 1 GB
-    /// of memory or less. Individual movies can override it through the API.
-    #[arg(long, env = "TORNAS_PEER_LIMIT", value_parser = clap::value_parser!(u32).range(1..))]
-    pub peer_limit: Option<u32>,
+    /// Maximum peers per torrent. Lower it on low-memory boards (e.g. 40 on a
+    /// Raspberry Pi 3 or Zero 2). Individual movies can override it through the API.
+    #[arg(long, env = "TORNAS_PEER_LIMIT", default_value = "128", value_parser = clap::value_parser!(u32).range(1..))]
+    pub peer_limit: u32,
 
-    /// Torrents verified at the same time on startup and when added. Defaults to 3,
-    /// or 1 on boards with about 1 GB of memory or less.
-    #[arg(long, env = "TORNAS_CONCURRENT_CHECKS", value_parser = clap::value_parser!(u32).range(1..))]
-    pub concurrent_checks: Option<u32>,
+    /// Torrents verified at the same time on startup and when added. Lower it to 1
+    /// on low-memory boards.
+    #[arg(long, env = "TORNAS_CONCURRENT_CHECKS", default_value = "3", value_parser = clap::value_parser!(u32).range(1..))]
+    pub concurrent_checks: u32,
 
     /// Port announced to trackers and the DHT, for when the router forwards a
     /// different external port to this box. Defaults to the listen port.

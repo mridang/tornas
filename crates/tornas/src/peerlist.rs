@@ -1,74 +1,12 @@
-//! Values that depend on the machine: defaults for small boards, and the peer
-//! block and allow lists, which are fetched and cached by tornas so an offline
-//! boot never stops the server from starting.
+//! The peer block and allow lists: IP ranges tornas refuses to connect to, or
+//! restricts itself to. They are fetched and cached so an offline boot never stops
+//! the server from starting.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use serde::Serialize;
 use tracing::{info, warn};
-
-use crate::config::ServerOpts;
-
-/// Boards at or under this much RAM get the conservative defaults
-/// (Raspberry Pi 3, Zero 2, older Orange Pi and Banana Pi models).
-pub const SMALL_BOARD_BYTES: u64 = 1_280 * 1024 * 1024;
-const DEFAULT_PEER_LIMIT: u32 = 128;
-const SMALL_PEER_LIMIT: u32 = 40;
-const DEFAULT_CHECKS: u32 = 3;
-const SMALL_CHECKS: u32 = 1;
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct Tuning {
-    pub memory_bytes: Option<u64>,
-    pub small_board: bool,
-    pub peer_limit: u32,
-    pub concurrent_checks: u32,
-}
-
-/// Total memory from /proc/meminfo (Linux only).
-pub fn total_memory() -> Option<u64> {
-    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
-    parse_mem_total(&text)
-}
-
-fn parse_mem_total(text: &str) -> Option<u64> {
-    text.lines()
-        .find(|l| l.starts_with("MemTotal:"))?
-        .split_whitespace()
-        .nth(1)?
-        .parse::<u64>()
-        .ok()
-        .map(|kb| kb * 1024)
-}
-
-/// Explicit settings always win; otherwise small boards get lower values.
-pub fn choose(memory: Option<u64>, peer_limit: Option<u32>, checks: Option<u32>) -> Tuning {
-    let small = memory.is_some_and(|m| m <= SMALL_BOARD_BYTES);
-    Tuning {
-        memory_bytes: memory,
-        small_board: small,
-        peer_limit: peer_limit.unwrap_or(if small {
-            SMALL_PEER_LIMIT
-        } else {
-            DEFAULT_PEER_LIMIT
-        }),
-        concurrent_checks: checks.unwrap_or(if small { SMALL_CHECKS } else { DEFAULT_CHECKS }),
-    }
-}
-
-pub fn from_opts(opts: &ServerOpts) -> Tuning {
-    let t = choose(total_memory(), opts.peer_limit, opts.concurrent_checks);
-    if t.small_board {
-        info!(
-            "small board ({} of memory): using {} peers per torrent and {} simultaneous check(s) unless set explicitly",
-            crate::utils::human_bytes(t.memory_bytes.unwrap_or(0)),
-            t.peer_limit,
-            t.concurrent_checks
-        );
-    }
-    t
-}
 
 /// Where a list came from and whether it is in force, for warnings and /api/config.
 #[derive(Debug, Clone, Serialize, Default)]
@@ -229,38 +167,6 @@ async fn download(url: &str) -> anyhow::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn small_boards_get_lower_defaults() {
-        let gb = 1024 * 1024 * 1024;
-        assert_eq!(choose(Some(906 * 1024 * 1024), None, None).peer_limit, 40);
-        assert_eq!(
-            choose(Some(906 * 1024 * 1024), None, None).concurrent_checks,
-            1
-        );
-        assert_eq!(choose(Some(4 * gb), None, None).peer_limit, 128);
-        assert_eq!(choose(Some(4 * gb), None, None).concurrent_checks, 3);
-        assert_eq!(
-            choose(None, None, None).peer_limit,
-            128,
-            "unknown memory is not small"
-        );
-        // explicit settings always win
-        let t = choose(Some(512 * 1024 * 1024), Some(200), Some(4));
-        assert_eq!(
-            (t.peer_limit, t.concurrent_checks, t.small_board),
-            (200, 4, true)
-        );
-    }
-
-    #[test]
-    fn parses_meminfo() {
-        assert_eq!(
-            parse_mem_total("MemTotal:        3884144 kB\nMemFree: 1 kB\n"),
-            Some(3_884_144 * 1024)
-        );
-        assert_eq!(parse_mem_total("nothing"), None);
-    }
 
     #[tokio::test]
     async fn ip_lists_fail_open_or_closed() {

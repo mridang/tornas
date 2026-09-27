@@ -232,7 +232,6 @@ pub fn observe(engine: Arc<Engine>) {
 
     // ---- global state
     let opts = engine.opts.clone();
-    let tuning = engine.tuning.clone();
     let engine_disk = engine.clone();
     g(
         &mut kept,
@@ -298,7 +297,7 @@ pub fn observe(engine: Arc<Engine>) {
             )
         }),
     );
-    let (peer_limit, checks) = (tuning.peer_limit, tuning.concurrent_checks);
+    let (peer_limit, checks) = (opts.peer_limit, opts.concurrent_checks);
     g(
         &mut kept,
         "tornas_peer_limit",

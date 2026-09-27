@@ -59,9 +59,8 @@ pub struct Engine {
     /// Serialises add + evict so two concurrent adds cannot both pass the budget check.
     add_lock: tokio::sync::Mutex<()>,
     /// Machine-dependent limits actually in force.
-    pub tuning: crate::tuning::Tuning,
-    pub blocklist: crate::tuning::IpListStatus,
-    pub allowlist: crate::tuning::IpListStatus,
+    pub blocklist: crate::peerlist::IpListStatus,
+    pub allowlist: crate::peerlist::IpListStatus,
     /// Compiled `[bandwidth]` windows and the index of the one in force.
     bandwidth: Vec<crate::schedule::Window>,
     bandwidth_active: parking_lot::Mutex<Option<usize>>,

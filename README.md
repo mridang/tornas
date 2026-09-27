@@ -99,14 +99,14 @@ Settings passed to librqbit when it starts. Defaults suit a home connection; cha
 | `--utp` | `TORNAS_UTP` | off | also accept and make uTP (BitTorrent over UDP) connections |
 | `--peer-blocklist` | `TORNAS_PEER_BLOCKLIST` | | IP list (P2P or CIDR format, file or http(s) URL, `.gz` fine) of peers never to talk to. Downloaded at start and cached; if it cannot be fetched and there is no cached copy, the server starts without it and warns |
 | `--peer-allowlist` | `TORNAS_PEER_ALLOWLIST` | | only ever talk to peers on this list. Unlike the blocklist, a missing list stops the server from starting |
-| `--peer-limit` | `TORNAS_PEER_LIMIT` | 128 (40 on small boards) | peers per torrent; each movie can override it |
-| `--concurrent-checks` | `TORNAS_CONCURRENT_CHECKS` | 3 (1 on small boards) | torrents hash-checked at once after a restart |
+| `--peer-limit` | `TORNAS_PEER_LIMIT` | 128 | peers per torrent; each movie can override it. Lower it on low-memory boards |
+| `--concurrent-checks` | `TORNAS_CONCURRENT_CHECKS` | 3 | torrents hash-checked at once after a restart. Lower it on low-memory boards |
 | `--announce-port` | `TORNAS_ANNOUNCE_PORT` | the listen port | port told to trackers and DHT, when a router forwards a different one |
 | `--dht-port` | `TORNAS_DHT_PORT` | random | fixed UDP port for DHT, for firewall rules |
 | `--dht-bootstrap` | `TORNAS_DHT_BOOTSTRAP` | librqbit's list | comma-separated `host:port` nodes to join the DHT through |
 | `--disable-lsd` | `TORNAS_LSD_DISABLE` | off | stop finding peers on the LAN by multicast (BEP 14) |
 
-A "small board" is one with less than about 1.25 GB of memory (Pi 3, Pi Zero 2, 1 GB Orange Pi). `GET /api/config` shows what was chosen under `engine`, along with the state of the peer lists.
+On low-memory boards (Pi 3, Pi Zero 2, 1 GB Orange Pi) set `--peer-limit 40` and `--concurrent-checks 1` to keep memory down; the defaults suit boards with more RAM. `GET /api/config` shows the values in force under `engine`, along with the state of the peer lists.
 
 ### Per-movie limits
 
