@@ -5,10 +5,13 @@
 //! addon, the DLNA browse tree and each protocol's own `/video` byte route) belongs
 //! to the adapters and is merged in by `router()`.
 
-pub mod acl;
 pub mod api;
 pub mod dashboard;
 pub mod middleware;
+
+// The source ACL lives with its gate in `middleware/source_acl.rs`; surface the
+// policy type here so config and the engine reach it as `crate::http::Acl`.
+pub use middleware::{Acl, DEFAULT_ALLOW};
 
 use std::sync::Arc;
 

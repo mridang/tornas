@@ -33,7 +33,7 @@ impl Default for NetworkConfig {
     fn default() -> Self {
         Self {
             ipv6: true,
-            allow_from: crate::http::acl::DEFAULT_ALLOW
+            allow_from: crate::http::DEFAULT_ALLOW
                 .split(',')
                 .map(str::to_owned)
                 .collect(),

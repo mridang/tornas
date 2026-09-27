@@ -224,9 +224,9 @@ pub fn check_env_text(text: &str) -> Report {
         if let Some(l) = get(k) {
             let v = [l.value.clone()];
             let res = if is_allow {
-                crate::http::acl::Acl::new(&v, &[])
+                crate::http::Acl::new(&v, &[])
             } else {
-                crate::http::acl::Acl::new(&["0.0.0.0/0".into()], &v)
+                crate::http::Acl::new(&["0.0.0.0/0".into()], &v)
             };
             if let Err(e) = res {
                 r.err(format!("line {}: {k}: {e:#}", l.line));
