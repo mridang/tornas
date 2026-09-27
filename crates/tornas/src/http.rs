@@ -173,16 +173,14 @@ pub fn shared(engine: AppState) -> impl FnOnce(Router) -> Router {
             .allow_methods(Any)
             .allow_headers(Any)
             .expose_headers(Any);
-        // The ACL gate carries its own Acl as state; the token gate needs the engine
-        // (for the configured token).
+        // Each gate carries only what it needs as state, never the engine: the ACL
+        // its ranges, the token gate the configured token.
         let acl = engine.acl.clone();
+        let token = middleware::ApiToken::new(engine.opts.api_token.clone());
         // Inside the source-address check (refused requests have their own counter)
         // and after routing (so the route template is known): token, then timing,
         // then CORS, then the private-network preflight, then the ACL outermost.
-        app.layer(axum::middleware::from_fn_with_state(
-            engine.clone(),
-            require_token,
-        ))
+        app.layer(axum::middleware::from_fn_with_state(token, require_token))
         .layer(axum::middleware::from_fn(crate::metrics::track_http))
         .layer(cors)
         .layer(axum::middleware::from_fn(allow_private_network))

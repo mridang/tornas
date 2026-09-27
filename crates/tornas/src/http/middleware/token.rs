@@ -2,20 +2,34 @@
 //! `Authorization: Bearer <token>` (or `X-Api-Token`). Everything Stremio and DLNA
 //! players use stays open.
 
+use std::sync::Arc;
+
 use axum::{
     extract::State,
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
 
-use crate::http::{ApiError, AppState};
+use crate::http::ApiError;
+
+/// The gate's only input: the configured token, or `None` when auth is off. Built
+/// from config and handed to the layer as state, so the gate needs nothing else.
+#[derive(Clone, Default)]
+pub struct ApiToken(pub Option<Arc<str>>);
+
+impl ApiToken {
+    /// Empty or absent means auth is off.
+    pub fn new(token: Option<String>) -> Self {
+        Self(token.filter(|t| !t.is_empty()).map(Arc::from))
+    }
+}
 
 pub(in crate::http) async fn require_token(
-    State(e): State<AppState>,
+    State(ApiToken(token)): State<ApiToken>,
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let Some(token) = e.opts.api_token.as_deref().filter(|t| !t.is_empty()) else {
+    let Some(token) = token.as_deref() else {
         return next.run(req).await;
     };
     let path = req.uri().path();

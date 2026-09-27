@@ -9,7 +9,7 @@ mod token;
 
 pub(super) use private_network::allow_private_network;
 pub(super) use source_acl::require_allowed_source;
-pub(super) use token::require_token;
+pub(super) use token::{ApiToken, require_token};
 
 // The source ACL's policy type is built from config and held by the engine, so it
 // is public beyond the gate itself.
