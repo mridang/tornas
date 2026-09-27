@@ -18,10 +18,7 @@ use tracing::warn;
 
 use super::builder::Addon;
 use super::extra::Extra;
-use super::handler::{
-    CatalogHandler, CatalogRequest, Error, MetaHandler, MetaRequest, Reply, StreamHandler,
-    StreamRequest,
-};
+use super::handler::{CatalogRequest, Error, Handler, MetaRequest, Reply, StreamRequest};
 use super::model::{ContentType, Resource};
 
 #[derive(Debug, Clone, Default)]
@@ -39,38 +36,34 @@ pub struct RouterOptions {
 /// The caller supplies CORS: the protocol requires every route, including the
 /// manifest, to allow all origins, and a host application usually has its own
 /// layer already.
-pub fn router<C, M, S>(addon: Addon<C, M, S>) -> Router
+pub fn router<H>(addon: Addon<H>) -> Router
 where
-    C: CatalogHandler,
-    M: MetaHandler,
-    S: StreamHandler,
+    H: Handler,
 {
     router_with(addon, RouterOptions::default())
 }
 
-pub fn router_with<C, M, S>(addon: Addon<C, M, S>, opts: RouterOptions) -> Router
+pub fn router_with<H>(addon: Addon<H>, opts: RouterOptions) -> Router
 where
-    C: CatalogHandler,
-    M: MetaHandler,
-    S: StreamHandler,
+    H: Handler,
 {
     let state = Arc::new(Mounted { addon, opts });
     let mut r = Router::new()
-        .route("/manifest.json", get(manifest_root::<C, M, S>))
-        .route("/{p1}/{p2}/{p3}", get(dispatch::<C, M, S>))
-        .route("/{p1}/{p2}/{p3}/{p4}", get(dispatch::<C, M, S>));
+        .route("/manifest.json", get(manifest_root::<H>))
+        .route("/{p1}/{p2}/{p3}", get(dispatch::<H>))
+        .route("/{p1}/{p2}/{p3}/{p4}", get(dispatch::<H>));
     if state.opts.fallback {
         r = r.fallback(|| async { protocol_error(StatusCode::NOT_FOUND, "not found") });
     }
     r.with_state(state)
 }
 
-struct Mounted<C, M, S> {
-    addon: Addon<C, M, S>,
+struct Mounted<H> {
+    addon: Addon<H>,
     opts: RouterOptions,
 }
 
-type Shared<C, M, S> = State<Arc<Mounted<C, M, S>>>;
+type Shared<H> = State<Arc<Mounted<H>>>;
 
 /// `{"err": "..."}` — the shape the addon SDK uses, which Stremio understands.
 fn protocol_error(status: StatusCode, msg: &str) -> Response {
@@ -104,11 +97,9 @@ fn reply<T: Serialize>(r: Result<Reply<T>, Error>) -> Response {
     }
 }
 
-async fn manifest_root<C, M, S>(State(m): Shared<C, M, S>) -> Response
+async fn manifest_root<H>(State(m): Shared<H>) -> Response
 where
-    C: CatalogHandler,
-    M: MetaHandler,
-    S: StreamHandler,
+    H: Handler,
 {
     json(m.addon.manifest(), None)
 }
@@ -123,15 +114,9 @@ fn strip_json(s: &str) -> &str {
 }
 
 /// One handler for every arity; which reading applies is decided here.
-async fn dispatch<C, M, S>(
-    State(m): Shared<C, M, S>,
-    params: RawPathParams,
-    headers: HeaderMap,
-) -> Response
+async fn dispatch<H>(State(m): Shared<H>, params: RawPathParams, headers: HeaderMap) -> Response
 where
-    C: CatalogHandler,
-    M: MetaHandler,
-    S: StreamHandler,
+    H: Handler,
 {
     let segs = segments(&params);
     let Some(req) = parse(&segs) else {
@@ -148,7 +133,7 @@ where
     match resource {
         Resource::Catalog => reply(
             m.addon
-                .catalog
+                .handler
                 .catalog(CatalogRequest {
                     base_url,
                     content_type,
@@ -159,7 +144,7 @@ where
         ),
         Resource::Meta => reply(
             m.addon
-                .meta
+                .handler
                 .meta(MetaRequest {
                     base_url,
                     content_type,
@@ -169,7 +154,7 @@ where
         ),
         Resource::Stream => reply(
             m.addon
-                .stream
+                .handler
                 .stream(StreamRequest {
                     base_url,
                     content_type,

@@ -1,59 +1,31 @@
-//! Assembling an addon, and deriving its manifest from what was assembled.
+//! Assembling an addon, and deriving its manifest from what was declared.
 //!
-//! The manifest's `resources` array is not something you write — it is generated
-//! from the handlers you register, so an addon cannot advertise a resource it
-//! cannot answer. Registering a handler changes the builder's type, which is how
-//! the compiler knows which resources exist.
+//! The manifest's `resources` array is generated from what you declare — a catalogue
+//! list makes it a catalogue addon, meta/stream types add those resources — so it
+//! can only advertise what it was set up to answer. The handler (one object
+//! implementing [`Handler`]) is attached last, at [`AddonBuilder::build`].
 //!
 //! ```ignore
 //! let addon = AddonBuilder::new("org.example.movies", "Movies", "1.0.0")
 //!     .description("What is on the box")
-//!     .types([ContentType::Movie])
 //!     .id_prefixes(["tt"])
-//!     .catalogs([CatalogDef::new(ContentType::Movie, "local", "Local")], library.clone())
-//!     .stream([ContentType::Movie], library)
-//!     .build()?;                       // resources: ["catalog", "stream"]
+//!     .catalogs([CatalogDef::new(ContentType::Movie, "local", "Local")])
+//!     .stream([ContentType::Movie])
+//!     .build(library)?;                // resources: ["catalog", "stream"]
 //! ```
 
-use super::handler::{
-    CatalogHandler, CatalogRequest, Error, MetaHandler, MetaRequest, Reply, StreamHandler,
-    StreamRequest,
-};
+use super::handler::Handler;
 use super::model::{
-    BehaviorHints, CatalogDef, CatalogResponse, ConfigField, ContentType, Manifest, MetaResponse,
-    Resource, ResourceEntry, StreamResponse,
+    BehaviorHints, CatalogDef, ConfigField, ContentType, Manifest, Resource, ResourceEntry,
 };
 
-/// Stands in for a resource the addon does not serve. Every request to it is a
-/// protocol 404, and the manifest never mentions it.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Unsupported;
-
-impl CatalogHandler for Unsupported {
-    async fn catalog(&self, _: CatalogRequest) -> Result<Reply<CatalogResponse>, Error> {
-        Err(Error::NotFound)
-    }
-}
-impl MetaHandler for Unsupported {
-    async fn meta(&self, _: MetaRequest) -> Result<Reply<MetaResponse>, Error> {
-        Err(Error::NotFound)
-    }
-}
-impl StreamHandler for Unsupported {
-    async fn stream(&self, _: StreamRequest) -> Result<Reply<StreamResponse>, Error> {
-        Err(Error::NotFound)
-    }
-}
-
-/// A finished addon: the manifest plus the handlers behind it.
-pub struct Addon<C = Unsupported, M = Unsupported, S = Unsupported> {
+/// A finished addon: the manifest plus the one handler behind it.
+pub struct Addon<H> {
     pub(super) manifest: Manifest,
-    pub(super) catalog: C,
-    pub(super) meta: M,
-    pub(super) stream: S,
+    pub(super) handler: H,
 }
 
-impl<C, M, S> Addon<C, M, S> {
+impl<H> Addon<H> {
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
     }
@@ -103,7 +75,9 @@ impl std::fmt::Display for BuildError {
 
 impl std::error::Error for BuildError {}
 
-pub struct AddonBuilder<C = Unsupported, M = Unsupported, S = Unsupported> {
+/// Declares an addon's manifest; the handler is supplied to [`Self::build`].
+#[derive(Default)]
+pub struct AddonBuilder {
     id: String,
     name: String,
     version: String,
@@ -118,9 +92,6 @@ pub struct AddonBuilder<C = Unsupported, M = Unsupported, S = Unsupported> {
     contact_email: Option<String>,
     meta_types: Vec<ContentType>,
     stream_types: Vec<ContentType>,
-    catalog_handler: C,
-    meta_handler: M,
-    stream_handler: S,
 }
 
 impl AddonBuilder {
@@ -130,25 +101,10 @@ impl AddonBuilder {
             id: id.into(),
             name: name.into(),
             version: version.into(),
-            description: String::new(),
-            types: Vec::new(),
-            id_prefixes: Vec::new(),
-            catalogs: Vec::new(),
-            config: Vec::new(),
-            behavior_hints: BehaviorHints::default(),
-            logo: None,
-            background: None,
-            contact_email: None,
-            meta_types: Vec::new(),
-            stream_types: Vec::new(),
-            catalog_handler: Unsupported,
-            meta_handler: Unsupported,
-            stream_handler: Unsupported,
+            ..Self::default()
         }
     }
-}
 
-impl<C, M, S> AddonBuilder<C, M, S> {
     pub fn description(mut self, d: impl Into<String>) -> Self {
         self.description = d.into();
         self
@@ -191,88 +147,26 @@ impl<C, M, S> AddonBuilder<C, M, S> {
         self
     }
 
-    /// Serve these catalogues, answered by `handler`.
-    pub fn catalogs<H: CatalogHandler>(
-        self,
-        defs: impl IntoIterator<Item = CatalogDef>,
-        handler: H,
-    ) -> AddonBuilder<H, M, S> {
-        AddonBuilder {
-            catalogs: defs.into_iter().collect(),
-            catalog_handler: handler,
-            id: self.id,
-            name: self.name,
-            version: self.version,
-            description: self.description,
-            types: self.types,
-            id_prefixes: self.id_prefixes,
-            config: self.config,
-            behavior_hints: self.behavior_hints,
-            logo: self.logo,
-            background: self.background,
-            contact_email: self.contact_email,
-            meta_types: self.meta_types,
-            stream_types: self.stream_types,
-            meta_handler: self.meta_handler,
-            stream_handler: self.stream_handler,
-        }
+    /// Declare the catalogues this addon publishes.
+    pub fn catalogs(mut self, defs: impl IntoIterator<Item = CatalogDef>) -> Self {
+        self.catalogs = defs.into_iter().collect();
+        self
     }
 
-    /// Serve metadata for these types.
-    pub fn meta<H: MetaHandler>(
-        self,
-        types: impl IntoIterator<Item = ContentType>,
-        handler: H,
-    ) -> AddonBuilder<C, H, S> {
-        AddonBuilder {
-            meta_types: types.into_iter().collect(),
-            meta_handler: handler,
-            id: self.id,
-            name: self.name,
-            version: self.version,
-            description: self.description,
-            types: self.types,
-            id_prefixes: self.id_prefixes,
-            catalogs: self.catalogs,
-            config: self.config,
-            behavior_hints: self.behavior_hints,
-            logo: self.logo,
-            background: self.background,
-            contact_email: self.contact_email,
-            stream_types: self.stream_types,
-            catalog_handler: self.catalog_handler,
-            stream_handler: self.stream_handler,
-        }
+    /// Declare that the addon serves metadata for these types.
+    pub fn meta(mut self, types: impl IntoIterator<Item = ContentType>) -> Self {
+        self.meta_types = types.into_iter().collect();
+        self
     }
 
-    /// Serve streams for these types.
-    pub fn stream<H: StreamHandler>(
-        self,
-        types: impl IntoIterator<Item = ContentType>,
-        handler: H,
-    ) -> AddonBuilder<C, M, H> {
-        AddonBuilder {
-            stream_types: types.into_iter().collect(),
-            stream_handler: handler,
-            id: self.id,
-            name: self.name,
-            version: self.version,
-            description: self.description,
-            types: self.types,
-            id_prefixes: self.id_prefixes,
-            catalogs: self.catalogs,
-            config: self.config,
-            behavior_hints: self.behavior_hints,
-            logo: self.logo,
-            background: self.background,
-            contact_email: self.contact_email,
-            meta_types: self.meta_types,
-            catalog_handler: self.catalog_handler,
-            meta_handler: self.meta_handler,
-        }
+    /// Declare that the addon serves streams for these types.
+    pub fn stream(mut self, types: impl IntoIterator<Item = ContentType>) -> Self {
+        self.stream_types = types.into_iter().collect();
+        self
     }
 
-    pub fn build(mut self) -> Result<Addon<C, M, S>, BuildError> {
+    /// Finish the addon, attaching the `handler` that answers requests.
+    pub fn build<H: Handler>(mut self, handler: H) -> Result<Addon<H>, BuildError> {
         for (name, v) in [
             ("id", &self.id),
             ("name", &self.name),
@@ -302,8 +196,8 @@ impl<C, M, S> AddonBuilder<C, M, S> {
             });
         }
 
-        // Types default to the union of what the handlers were registered for, so a
-        // small addon never has to say the same thing twice.
+        // Types default to the union of what was declared, so a small addon never
+        // has to say the same thing twice.
         if self.types.is_empty() {
             for t in self
                 .catalogs
@@ -350,9 +244,7 @@ impl<C, M, S> AddonBuilder<C, M, S> {
                 contact_email: self.contact_email,
                 behavior_hints: self.behavior_hints,
             },
-            catalog: self.catalog_handler,
-            meta: self.meta_handler,
-            stream: self.stream_handler,
+            handler,
         })
     }
 }
@@ -360,15 +252,19 @@ impl<C, M, S> AddonBuilder<C, M, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stremio::model::ConfigFieldType;
+    use crate::stremio::handler::{CatalogRequest, Error, MetaRequest, Reply, StreamRequest};
+    use crate::stremio::model::{
+        CatalogResponse, ConfigFieldType, MetaResponse, StreamResponse,
+    };
 
     struct Dummy;
-    impl CatalogHandler for Dummy {
+    impl Handler for Dummy {
         async fn catalog(&self, _: CatalogRequest) -> Result<Reply<CatalogResponse>, Error> {
             Ok(Reply::new(CatalogResponse::default()))
         }
-    }
-    impl StreamHandler for Dummy {
+        async fn meta(&self, _: MetaRequest) -> Result<Reply<MetaResponse>, Error> {
+            Err(Error::NotFound)
+        }
         async fn stream(&self, _: StreamRequest) -> Result<Reply<StreamResponse>, Error> {
             Ok(Reply::new(StreamResponse::default()))
         }
@@ -379,26 +275,20 @@ mod tests {
     }
 
     #[test]
-    fn resources_come_from_the_handlers_that_were_registered() {
+    fn resources_come_from_what_was_declared() {
         let addon = base()
-            .catalogs(
-                [CatalogDef::new(ContentType::Movie, "local", "Local")],
-                Dummy,
-            )
-            .stream([ContentType::Movie], Dummy)
+            .catalogs([CatalogDef::new(ContentType::Movie, "local", "Local")])
+            .stream([ContentType::Movie])
             .id_prefixes(["tt"])
-            .build()
+            .build(Dummy)
             .unwrap();
         let v = serde_json::to_value(addon.manifest()).unwrap();
         assert_eq!(v["resources"][0], "catalog");
         assert_eq!(v["resources"][1]["name"], "stream");
         assert_eq!(v["resources"][1]["idPrefixes"][0], "tt");
-        // Never advertised: nothing implements them.
+        // Meta was never declared, so it is not advertised.
         assert_eq!(v["resources"].as_array().unwrap().len(), 2);
-        assert_eq!(
-            v["types"][0], "movie",
-            "types default to what was registered"
-        );
+        assert_eq!(v["types"][0], "movie", "types default to what was declared");
     }
 
     #[test]
@@ -416,8 +306,8 @@ mod tests {
                 configuration_required: true,
                 ..Default::default()
             })
-            .stream([ContentType::Movie], Dummy)
-            .build()
+            .stream([ContentType::Movie])
+            .build(Dummy)
             .unwrap();
         assert!(addon.manifest().behavior_hints.configuration_required);
         let configured = addon.manifest_for(Some("abc123"));
@@ -432,17 +322,14 @@ mod tests {
         assert!(matches!(
             AddonBuilder::new("", "Example", "1.0.0")
                 .description("d")
-                .build(),
+                .build(Dummy),
             Err(BuildError::MissingField("id"))
         ));
         assert!(matches!(
             base()
                 .types([ContentType::Series])
-                .catalogs(
-                    [CatalogDef::new(ContentType::Movie, "local", "Local")],
-                    Dummy
-                )
-                .build(),
+                .catalogs([CatalogDef::new(ContentType::Movie, "local", "Local")])
+                .build(Dummy),
             Err(BuildError::UnknownCatalogType(_))
         ));
         assert!(matches!(
@@ -455,8 +342,8 @@ mod tests {
                     options: vec![],
                     required: false,
                 }])
-                .stream([ContentType::Movie], Dummy)
-                .build(),
+                .stream([ContentType::Movie])
+                .build(Dummy),
             Err(BuildError::ConfigWithoutButton)
         ));
     }

@@ -21,9 +21,6 @@ pub mod router;
 
 pub use builder::{Addon, AddonBuilder, BuildError};
 pub use extra::Extra;
-pub use handler::{
-    CatalogHandler, CatalogRequest, Error, MetaHandler, MetaRequest, Reply, StreamHandler,
-    StreamRequest,
-};
+pub use handler::{CatalogRequest, Error, Handler, MetaRequest, Reply, StreamRequest};
 pub use model::*;
 pub use router::{RouterOptions, router, router_with};

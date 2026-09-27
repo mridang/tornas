@@ -47,11 +47,11 @@ application in its own vocabulary:
   fires, and shuts down; the HTTP server, discovery and systemd integration are
   components.
 - `dlna::Browsable` yields playable files — title, size, mime, path.
-- `stremio::CatalogHandler` and friends yield catalogue entries — IMDb ids,
-  posters, genres, streams.
+- `stremio::Handler` yields catalogue entries, per-title metadata and streams —
+  IMDb ids, posters, genres, stream URLs.
 - `mdns::advertise` takes a service type, a name and TXT records.
 
-Each protocol still defines its own trait (`Browsable`, `CatalogHandler`, …) in its
+Each protocol still defines its own trait (`Browsable`, `Handler`) in its
 own vocabulary — that is what keeps the modules importing nothing from this crate.
 But the *app* feeds them all from one place: `media_catalog::Library`, which yields
 `MediaEntry` — the completed media as plain data (title, images, genres, the

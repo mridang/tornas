@@ -9,10 +9,9 @@ use std::sync::Arc;
 use crate::{
     media_catalog::{Library, MediaEntry},
     stremio::{
-        AddonBuilder, BuildError, CatalogDef, CatalogHandler, CatalogRequest, CatalogResponse,
-        ContentType, Error, ExtraDef, Meta, MetaHandler, MetaPreview, MetaRequest, MetaResponse,
-        PosterShape, Reply, Stream, StreamBehaviorHints, StreamHandler, StreamRequest,
-        StreamResponse, StreamSource, Video,
+        AddonBuilder, BuildError, CatalogDef, CatalogRequest, CatalogResponse, ContentType, Error,
+        ExtraDef, Handler, Meta, MetaPreview, MetaRequest, MetaResponse, PosterShape, Reply,
+        Stream, StreamBehaviorHints, StreamRequest, StreamResponse, StreamSource, Video,
     },
     utils::human_bytes,
 };
@@ -26,7 +25,7 @@ pub const CATALOG_ID: &str = "local";
 pub struct StremioLibrary(pub Arc<dyn Library>);
 
 /// The addon this crate serves: catalogue, metadata and streams, all from the library.
-pub type TornasAddon = crate::stremio::Addon<StremioLibrary, StremioLibrary, StremioLibrary>;
+pub type TornasAddon = crate::stremio::Addon<StremioLibrary>;
 
 /// The Stremio addon as an axum router, ready to merge at the root. Panics only on
 /// a malformed manifest, which is a programming error, not a runtime condition.
@@ -54,16 +53,13 @@ pub fn addon(library: StremioLibrary, name: String) -> Result<TornasAddon, Build
         .logo("https://raw.githubusercontent.com/Stremio/stremio-art/main/originals/Stremio-logo-white.png")
         .types([ContentType::Movie])
         .id_prefixes(["tt"])
-        .catalogs(
-            [CatalogDef::new(ContentType::Movie, CATALOG_ID, "Local Library")
-                .extra(ExtraDef::optional("search"))
-                .extra(ExtraDef::optional("skip"))
-                .extra(ExtraDef::optional("genre"))],
-            library.clone(),
-        )
-        .meta([ContentType::Movie], library.clone())
-        .stream([ContentType::Movie], library)
-        .build()
+        .catalogs([CatalogDef::new(ContentType::Movie, CATALOG_ID, "Local Library")
+            .extra(ExtraDef::optional("search"))
+            .extra(ExtraDef::optional("skip"))
+            .extra(ExtraDef::optional("genre"))])
+        .meta([ContentType::Movie])
+        .stream([ContentType::Movie])
+        .build(library)
 }
 
 /// Stremio pages in hundreds; a shorter page tells it the catalogue has ended.
@@ -135,7 +131,7 @@ fn stream_for(e: &MediaEntry, base_url: &str) -> Stream {
     }
 }
 
-impl CatalogHandler for StremioLibrary {
+impl Handler for StremioLibrary {
     async fn catalog(&self, req: CatalogRequest) -> Result<Reply<CatalogResponse>, Error> {
         if req.id != CATALOG_ID {
             return Err(Error::NotFound);
@@ -161,18 +157,14 @@ impl CatalogHandler for StremioLibrary {
         })
         .cache_max_age(30))
     }
-}
 
-impl MetaHandler for StremioLibrary {
     async fn meta(&self, req: MetaRequest) -> Result<Reply<MetaResponse>, Error> {
         Ok(Reply::new(MetaResponse {
             meta: self.0.entry(&req.id).as_ref().map(full_meta),
         })
         .cache_max_age(30))
     }
-}
 
-impl StreamHandler for StremioLibrary {
     async fn stream(&self, req: StreamRequest) -> Result<Reply<StreamResponse>, Error> {
         let streams = self
             .0

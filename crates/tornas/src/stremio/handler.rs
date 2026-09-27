@@ -131,21 +131,20 @@ pub struct StreamRequest {
     pub id: String,
 }
 
-pub trait CatalogHandler: Send + Sync + 'static {
+/// What an addon answers: the catalogue, per-title metadata, and streams. A
+/// resource an addon does not serve returns [`Error::NotFound`]; the manifest only
+/// advertises the resources whose catalogues/types were declared on the builder.
+pub trait Handler: Send + Sync + 'static {
     fn catalog(
         &self,
         req: CatalogRequest,
     ) -> impl Future<Output = Result<Reply<CatalogResponse>, Error>> + Send;
-}
 
-pub trait MetaHandler: Send + Sync + 'static {
     fn meta(
         &self,
         req: MetaRequest,
     ) -> impl Future<Output = Result<Reply<MetaResponse>, Error>> + Send;
-}
 
-pub trait StreamHandler: Send + Sync + 'static {
     fn stream(
         &self,
         req: StreamRequest,
