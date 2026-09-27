@@ -1,28 +1,37 @@
 # Architecture
 
-One crate, `crates/tornas`, organised as modules named after what they do rather
-than which tier they belong to. Where a module has several files it uses the 2018
-layout: `src/foo.rs` holds the module, `src/foo/` holds its children.
+A cargo workspace: one application crate, `crates/tornas`, plus a handful of
+**application-agnostic crates** it depends on. The split is the boundary — an
+agnostic crate literally cannot import the app, because the app depends on it and
+not the reverse, so the compiler enforces what a lint used to grep for.
+
+```
+crates/
+  tornas/            the application (binary + wiring)
+  mdns/              DNS-SD advertisement                     (no knowledge of tornas)
+  service/           the generic component runtime + systemd  (no knowledge of tornas)
+  stremio/           the Stremio addon protocol               (no knowledge of tornas)
+  dlna/              a UPnP/DLNA content directory             (no knowledge of tornas)
+  tmdb/              a TMDB metadata client                    (no knowledge of tornas)
+```
+
+Inside `crates/tornas/src`, modules are named after what they do. Where a module
+has several files it uses the 2018 layout (`foo.rs` beside `foo/`):
 
 ```
 src/
-  main.rs            binary entry: parse arguments, build telemetry + logging, dispatch
+  main.rs            binary entry: parse arguments, build o11y, dispatch
   lib.rs             module tree, the outln! macro, run_server
-  utils/             size: size parsing/formatting, rates, durations, now_secs
+  server.rs          run_server: assemble the service and its components
+  utils/             size: parsing/formatting, rates, durations, now_secs
                      mount: disk usage and mount-point checks (Linux disk guard)
 
   config.rs / config/  args (clap + TORNAS_* env), file (TOML), check (`config check`)
   cli/               the terminal commands: status, top, pause, doctor, health (an API client)
   engine/            the torrent engine; the only place that knows librqbit
-  media_catalog/      the library facade: the sqlite store, the pluggable
-                     eviction policy, and the TMDB client
+  media_catalog/      the library facade: the sqlite store + the eviction rule
   http/              the JSON API, the dashboard, /video, middleware, the source ACL
-
-  service/           the generic runtime: components, signals, systemd  ← no crate:: imports
-  stremio/           the Stremio addon protocol                         ← no crate:: imports
-  dlna/              a UPnP/DLNA content directory                      ← no crate:: imports
-  mdns.rs            DNS-SD advertisement                               ← no crate:: imports
-  adapters/          implements those protocols for this crate's types
+  adapters/          implements the protocol crates' traits for this app's types
 
   o11y.rs            observability: OTel providers + the tracing subscriber (stdout + OTLP)
   metrics.rs         the instruments; /metrics scrape and OTLP push
@@ -30,57 +39,44 @@ src/
   fixtures.rs        test fixture generator and seeder
 ```
 
-## The one rule
+## The one rule: agnostic crates never import the app
 
-**`service/`, `stremio/`, `dlna/` and `mdns.rs` may not import anything from this
-crate.**
-
-`service/` is a generic composition root — a set of long-running components run
-until a termination signal — with no knowledge of torrents; the other three are
-complete implementations of a protocol each. Each defines what it needs from the
-application in its own vocabulary:
+Each agnostic crate defines what it needs from the application in its own
+vocabulary, and gets it through a trait the app implements:
 
 - `service::Component` is anything that starts, runs until a cancellation token
-  fires, and shuts down; the HTTP server, discovery and systemd integration are
-  components.
+  fires, and shuts down; the HTTP server, discovery and systemd are components.
 - `dlna::Browsable` yields playable files — title, size, mime, path.
-- `stremio::Handler` yields catalogue entries, per-title metadata and streams —
-  IMDb ids, posters, genres, stream URLs.
+- `stremio::Handler` yields catalogue entries, metadata and streams.
 - `mdns::advertise` takes a service type, a name and TXT records.
+- `tmdb::Tmdb` maps an IMDb id to a `TmdbMovie`; the app turns that into a catalog row.
 
-Each protocol still defines its own trait (`Browsable`, `Handler`) in its
-own vocabulary — that is what keeps the modules importing nothing from this crate.
-But the *app* feeds them all from one place: `media_catalog::Library`, which yields
-`MediaEntry` — the completed media as plain data (title, images, genres, the
-playable file). `MediaCatalog` implements `Library`.
+The two protocol crates (`stremio`, `dlna`) are laid out the same way so they read
+alike: `handler.rs` holds the trait the app implements, `model.rs` the wire types,
+and the rest is the protocol's own server (`router.rs`/`builder.rs` for Stremio,
+`browse.rs` for DLNA). Stremio simply has more files because it is a bigger protocol.
 
-`adapters/` is the only code that knows both worlds, and both adapters are the same
-shape: each wraps an `Arc<dyn Library>`, reads its `MediaEntry`s, and maps them to
-its protocol's type (`DlnaLibrary` → `MediaItem`, `StremioLibrary` → `Meta`/`Stream`).
+The app feeds both from one place: `media_catalog::Library` yields `MediaEntry` —
+the completed media as plain data (title, images, genres, the playable file).
+`adapters/` is the only code that knows both worlds, and both adapters are twins:
+each wraps an `Arc<dyn Library>`, reads its `MediaEntry`s, and maps them to its
+protocol's type (`DlnaLibrary` → `MediaItem`, `StremioLibrary` → `Meta`/`Stream`).
 Neither touches the engine — a future Plex adapter is a third twin over the same
 `Library`.
 
-CI enforces the rule (see `.github/workflows/lint.yml`):
-
-```sh
-grep -rn 'crate::' src/service src/stremio src/dlna src/mdns.rs   # only self-references allowed
-```
-
-This is also what keeps the option of lifting any of them into its own crate: a
-module with no internal imports moves with a directory rename and a Cargo.toml.
-`service/` is built to be cannibalised for a future UDP service (an SNMP trap
-ingester) that reuses the same runtime; `stremio/` is the realistic candidate to
-publish, being a public protocol other people implement. `dlna/` cannot follow,
-because it implements a trait from `upnp-serve`, which is a git dependency.
+`stremio` is the realistic candidate to publish, being a public protocol other
+people implement. `dlna` cannot, because it implements a trait from `upnp-serve`, a
+git dependency; it stays a workspace crate. `service` is built to be reused by a
+future UDP service (an SNMP trap ingester) on the same runtime.
 
 ## Dependency direction
 
 ```
-main.rs → o11y.rs → run_server (lib.rs, wiring)
-  ├─→ service/ ──→ runs the components below                     (leaf: nothing from this crate)
-  ├─→ http/ ────→ engine/ ─→ media_catalog (store + eviction + tmdb), trackers
-  ├─→ adapters/ ─→ media_catalog (Library), and the protocol modules  (no engine)
-  ├─→ stremio/, dlna/, mdns.rs                                   (leaves: nothing from this crate)
+main.rs → o11y.rs → run_server (server.rs, wiring)
+  ├─→ service crate ─→ runs the components below
+  ├─→ http/ ────→ engine/ ─→ media_catalog (store + eviction + the tmdb crate), trackers
+  ├─→ adapters/ ─→ media_catalog (Library) + the stremio & dlna crates   (no engine)
+  ├─→ stremio, dlna, mdns, tmdb crates                                   (agnostic; can't see the app)
   ├─→ o11y.rs, metrics.rs, utils/mount.rs
   └─→ cli/                        (speaks HTTP to a running server, not the engine)
 ```
