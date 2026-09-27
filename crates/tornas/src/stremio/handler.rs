@@ -7,10 +7,7 @@
 use std::future::Future;
 
 use super::extra::Extra;
-use super::model::{
-    AddonCatalogResponse, CatalogResponse, ContentType, MetaResponse, StreamResponse,
-    SubtitlesResponse,
-};
+use super::model::{CatalogResponse, ContentType, MetaResponse, StreamResponse};
 
 /// Why a request could not be answered. Everything else is the addon's own error,
 /// reported to Stremio as a 500.
@@ -140,23 +137,6 @@ pub struct StreamRequest {
     pub config: Config,
 }
 
-#[derive(Debug, Clone)]
-pub struct SubtitlesRequest {
-    pub base_url: BaseUrl,
-    pub content_type: ContentType,
-    pub id: String,
-    pub extra: Extra,
-    pub config: Config,
-}
-
-#[derive(Debug, Clone)]
-pub struct AddonCatalogRequest {
-    pub base_url: BaseUrl,
-    pub content_type: ContentType,
-    pub id: String,
-    pub config: Config,
-}
-
 pub trait CatalogHandler: Send + Sync + 'static {
     fn catalog(
         &self,
@@ -176,20 +156,6 @@ pub trait StreamHandler: Send + Sync + 'static {
         &self,
         req: StreamRequest,
     ) -> impl Future<Output = Result<Reply<StreamResponse>, Error>> + Send;
-}
-
-pub trait SubtitlesHandler: Send + Sync + 'static {
-    fn subtitles(
-        &self,
-        req: SubtitlesRequest,
-    ) -> impl Future<Output = Result<Reply<SubtitlesResponse>, Error>> + Send;
-}
-
-pub trait AddonCatalogHandler: Send + Sync + 'static {
-    fn addon_catalog(
-        &self,
-        req: AddonCatalogRequest,
-    ) -> impl Future<Output = Result<Reply<AddonCatalogResponse>, Error>> + Send;
 }
 
 #[cfg(test)]

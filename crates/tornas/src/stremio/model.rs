@@ -44,8 +44,6 @@ pub enum Resource {
     Catalog,
     Meta,
     Stream,
-    Subtitles,
-    AddonCatalog,
 }
 
 impl Resource {
@@ -54,8 +52,6 @@ impl Resource {
             Self::Catalog => "catalog",
             Self::Meta => "meta",
             Self::Stream => "stream",
-            Self::Subtitles => "subtitles",
-            Self::AddonCatalog => "addon_catalog",
         }
     }
 
@@ -64,8 +60,6 @@ impl Resource {
             "catalog" => Some(Self::Catalog),
             "meta" => Some(Self::Meta),
             "stream" => Some(Self::Stream),
-            "subtitles" => Some(Self::Subtitles),
-            "addon_catalog" => Some(Self::AddonCatalog),
             _ => None,
         }
     }
@@ -85,8 +79,6 @@ pub struct Manifest {
     pub catalogs: Vec<CatalogDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub id_prefixes: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub addon_catalogs: Vec<CatalogDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub config: Vec<ConfigField>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -464,17 +456,6 @@ pub struct Subtitle {
     pub label: Option<String>,
 }
 
-/// An entry in a catalogue of other addons.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AddonEntry {
-    /// Only `"http"` is officially supported.
-    pub transport_name: String,
-    /// URL of that addon's `manifest.json`.
-    pub transport_url: String,
-    pub manifest: Manifest,
-}
-
 // ---- responses -------------------------------------------------------------
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -496,18 +477,6 @@ pub struct MetaResponse {
 #[serde(rename_all = "camelCase")]
 pub struct StreamResponse {
     pub streams: Vec<Stream>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SubtitlesResponse {
-    pub subtitles: Vec<Subtitle>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AddonCatalogResponse {
-    pub addons: Vec<AddonEntry>,
 }
 
 #[cfg(test)]
@@ -581,7 +550,6 @@ mod tests {
             types: vec![ContentType::Movie],
             catalogs: vec![],
             id_prefixes: vec![],
-            addon_catalogs: vec![],
             config: vec![],
             background: None,
             logo: None,

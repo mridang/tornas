@@ -21,8 +21,8 @@ use tracing::warn;
 use super::builder::Addon;
 use super::extra::Extra;
 use super::handler::{
-    AddonCatalogHandler, AddonCatalogRequest, CatalogHandler, CatalogRequest, Error, MetaHandler,
-    MetaRequest, Reply, StreamHandler, StreamRequest, SubtitlesHandler, SubtitlesRequest,
+    CatalogHandler, CatalogRequest, Error, MetaHandler, MetaRequest, Reply, StreamHandler,
+    StreamRequest,
 };
 use super::model::{ContentType, Resource};
 
@@ -68,44 +68,34 @@ impl Default for RouterOptions {
 /// The caller supplies CORS: the protocol requires every route, including the
 /// manifest, to allow all origins, and a host application usually has its own
 /// layer already.
-pub fn router<C, M, S, Sb, Ac>(addon: Addon<C, M, S, Sb, Ac>) -> Router
+pub fn router<C, M, S>(addon: Addon<C, M, S>) -> Router
 where
     C: CatalogHandler,
     M: MetaHandler,
     S: StreamHandler,
-    Sb: SubtitlesHandler,
-    Ac: AddonCatalogHandler,
 {
     router_with(addon, RouterOptions::default())
 }
 
-pub fn router_with<C, M, S, Sb, Ac>(addon: Addon<C, M, S, Sb, Ac>, opts: RouterOptions) -> Router
+pub fn router_with<C, M, S>(addon: Addon<C, M, S>, opts: RouterOptions) -> Router
 where
     C: CatalogHandler,
     M: MetaHandler,
     S: StreamHandler,
-    Sb: SubtitlesHandler,
-    Ac: AddonCatalogHandler,
 {
     let state = Arc::new(Mounted { addon, opts });
     let mut r = Router::new()
-        .route("/manifest.json", get(manifest_root::<C, M, S, Sb, Ac>))
-        .route("/{p1}/{p2}/{p3}", get(dispatch::<C, M, S, Sb, Ac>))
-        .route("/{p1}/{p2}/{p3}/{p4}", get(dispatch::<C, M, S, Sb, Ac>))
-        .route(
-            "/{p1}/{p2}/{p3}/{p4}/{p5}",
-            get(dispatch::<C, M, S, Sb, Ac>),
-        );
+        .route("/manifest.json", get(manifest_root::<C, M, S>))
+        .route("/{p1}/{p2}/{p3}", get(dispatch::<C, M, S>))
+        .route("/{p1}/{p2}/{p3}/{p4}", get(dispatch::<C, M, S>))
+        .route("/{p1}/{p2}/{p3}/{p4}/{p5}", get(dispatch::<C, M, S>));
     if state.opts.config_mode != ConfigMode::Disabled {
-        r = r.route(
-            "/{p1}/manifest.json",
-            get(manifest_configured::<C, M, S, Sb, Ac>),
-        );
+        r = r.route("/{p1}/manifest.json", get(manifest_configured::<C, M, S>));
     }
     if state.opts.landing {
         r = r
-            .route("/", get(landing::<C, M, S, Sb, Ac>))
-            .route("/configure", get(landing::<C, M, S, Sb, Ac>));
+            .route("/", get(landing::<C, M, S>))
+            .route("/configure", get(landing::<C, M, S>));
     }
     if state.opts.fallback {
         r = r.fallback(|| async { protocol_error(StatusCode::NOT_FOUND, "not found") });
@@ -113,12 +103,12 @@ where
     r.with_state(state)
 }
 
-struct Mounted<C, M, S, Sb, Ac> {
-    addon: Addon<C, M, S, Sb, Ac>,
+struct Mounted<C, M, S> {
+    addon: Addon<C, M, S>,
     opts: RouterOptions,
 }
 
-type Shared<C, M, S, Sb, Ac> = State<Arc<Mounted<C, M, S, Sb, Ac>>>;
+type Shared<C, M, S> = State<Arc<Mounted<C, M, S>>>;
 
 /// `{"err": "..."}` — the shape the addon SDK uses, which Stremio understands.
 fn protocol_error(status: StatusCode, msg: &str) -> Response {
@@ -152,13 +142,11 @@ fn reply<T: Serialize>(r: Result<Reply<T>, Error>) -> Response {
     }
 }
 
-async fn manifest_root<C, M, S, Sb, Ac>(State(m): Shared<C, M, S, Sb, Ac>) -> Response
+async fn manifest_root<C, M, S>(State(m): Shared<C, M, S>) -> Response
 where
     C: CatalogHandler,
     M: MetaHandler,
     S: StreamHandler,
-    Sb: SubtitlesHandler,
-    Ac: AddonCatalogHandler,
 {
     if m.opts.config_mode == ConfigMode::Required {
         // Without user data there is nothing to serve yet, but the manifest still
@@ -168,28 +156,21 @@ where
     json(m.addon.manifest(), None)
 }
 
-async fn manifest_configured<C, M, S, Sb, Ac>(
-    State(m): Shared<C, M, S, Sb, Ac>,
-    params: RawPathParams,
-) -> Response
+async fn manifest_configured<C, M, S>(State(m): Shared<C, M, S>, params: RawPathParams) -> Response
 where
     C: CatalogHandler,
     M: MetaHandler,
     S: StreamHandler,
-    Sb: SubtitlesHandler,
-    Ac: AddonCatalogHandler,
 {
     let config = segments(&params).into_iter().next();
     json(&m.addon.manifest_for(config.as_deref()), None)
 }
 
-async fn landing<C, M, S, Sb, Ac>(State(m): Shared<C, M, S, Sb, Ac>) -> Response
+async fn landing<C, M, S>(State(m): Shared<C, M, S>) -> Response
 where
     C: CatalogHandler,
     M: MetaHandler,
     S: StreamHandler,
-    Sb: SubtitlesHandler,
-    Ac: AddonCatalogHandler,
 {
     let man = m.addon.manifest();
     let html = format!(
@@ -224,8 +205,8 @@ fn strip_json(s: &str) -> &str {
 }
 
 /// One handler for every arity; which reading applies is decided here.
-async fn dispatch<C, M, S, Sb, Ac>(
-    State(m): Shared<C, M, S, Sb, Ac>,
+async fn dispatch<C, M, S>(
+    State(m): Shared<C, M, S>,
     params: RawPathParams,
     headers: HeaderMap,
 ) -> Response
@@ -233,8 +214,6 @@ where
     C: CatalogHandler,
     M: MetaHandler,
     S: StreamHandler,
-    Sb: SubtitlesHandler,
-    Ac: AddonCatalogHandler,
 {
     let segs = segments(&params);
     let Some(req) = parse(&segs, m.opts.config_mode) else {
@@ -277,29 +256,6 @@ where
             m.addon
                 .stream
                 .stream(StreamRequest {
-                    base_url,
-                    content_type,
-                    id,
-                    config,
-                })
-                .await,
-        ),
-        Resource::Subtitles => reply(
-            m.addon
-                .subtitles
-                .subtitles(SubtitlesRequest {
-                    base_url,
-                    content_type,
-                    id,
-                    extra,
-                    config,
-                })
-                .await,
-        ),
-        Resource::AddonCatalog => reply(
-            m.addon
-                .addon_catalog
-                .addon_catalog(AddonCatalogRequest {
                     base_url,
                     content_type,
                     id,

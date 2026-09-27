@@ -16,12 +16,12 @@
 //! ```
 
 use super::handler::{
-    AddonCatalogHandler, AddonCatalogRequest, CatalogHandler, CatalogRequest, Error, MetaHandler,
-    MetaRequest, Reply, StreamHandler, StreamRequest, SubtitlesHandler, SubtitlesRequest,
+    CatalogHandler, CatalogRequest, Error, MetaHandler, MetaRequest, Reply, StreamHandler,
+    StreamRequest,
 };
 use super::model::{
-    AddonCatalogResponse, BehaviorHints, CatalogDef, CatalogResponse, ConfigField, ContentType,
-    Manifest, MetaResponse, Resource, ResourceEntry, StreamResponse, SubtitlesResponse,
+    BehaviorHints, CatalogDef, CatalogResponse, ConfigField, ContentType, Manifest, MetaResponse,
+    Resource, ResourceEntry, StreamResponse,
 };
 
 /// Stands in for a resource the addon does not serve. Every request to it is a
@@ -44,37 +44,16 @@ impl StreamHandler for Unsupported {
         Err(Error::NotFound)
     }
 }
-impl SubtitlesHandler for Unsupported {
-    async fn subtitles(&self, _: SubtitlesRequest) -> Result<Reply<SubtitlesResponse>, Error> {
-        Err(Error::NotFound)
-    }
-}
-impl AddonCatalogHandler for Unsupported {
-    async fn addon_catalog(
-        &self,
-        _: AddonCatalogRequest,
-    ) -> Result<Reply<AddonCatalogResponse>, Error> {
-        Err(Error::NotFound)
-    }
-}
 
 /// A finished addon: the manifest plus the handlers behind it.
-pub struct Addon<
-    C = Unsupported,
-    M = Unsupported,
-    S = Unsupported,
-    Sb = Unsupported,
-    Ac = Unsupported,
-> {
+pub struct Addon<C = Unsupported, M = Unsupported, S = Unsupported> {
     pub(super) manifest: Manifest,
     pub(super) catalog: C,
     pub(super) meta: M,
     pub(super) stream: S,
-    pub(super) subtitles: Sb,
-    pub(super) addon_catalog: Ac,
 }
 
-impl<C, M, S, Sb, Ac> Addon<C, M, S, Sb, Ac> {
+impl<C, M, S> Addon<C, M, S> {
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
     }
@@ -124,13 +103,7 @@ impl std::fmt::Display for BuildError {
 
 impl std::error::Error for BuildError {}
 
-pub struct AddonBuilder<
-    C = Unsupported,
-    M = Unsupported,
-    S = Unsupported,
-    Sb = Unsupported,
-    Ac = Unsupported,
-> {
+pub struct AddonBuilder<C = Unsupported, M = Unsupported, S = Unsupported> {
     id: String,
     name: String,
     version: String,
@@ -138,7 +111,6 @@ pub struct AddonBuilder<
     types: Vec<ContentType>,
     id_prefixes: Vec<String>,
     catalogs: Vec<CatalogDef>,
-    addon_catalogs: Vec<CatalogDef>,
     config: Vec<ConfigField>,
     behavior_hints: BehaviorHints,
     logo: Option<String>,
@@ -146,12 +118,9 @@ pub struct AddonBuilder<
     contact_email: Option<String>,
     meta_types: Vec<ContentType>,
     stream_types: Vec<ContentType>,
-    subtitle_types: Vec<ContentType>,
     catalog_handler: C,
     meta_handler: M,
     stream_handler: S,
-    subtitles_handler: Sb,
-    addon_catalog_handler: Ac,
 }
 
 impl AddonBuilder {
@@ -165,7 +134,6 @@ impl AddonBuilder {
             types: Vec::new(),
             id_prefixes: Vec::new(),
             catalogs: Vec::new(),
-            addon_catalogs: Vec::new(),
             config: Vec::new(),
             behavior_hints: BehaviorHints::default(),
             logo: None,
@@ -173,17 +141,14 @@ impl AddonBuilder {
             contact_email: None,
             meta_types: Vec::new(),
             stream_types: Vec::new(),
-            subtitle_types: Vec::new(),
             catalog_handler: Unsupported,
             meta_handler: Unsupported,
             stream_handler: Unsupported,
-            subtitles_handler: Unsupported,
-            addon_catalog_handler: Unsupported,
         }
     }
 }
 
-impl<C, M, S, Sb, Ac> AddonBuilder<C, M, S, Sb, Ac> {
+impl<C, M, S> AddonBuilder<C, M, S> {
     pub fn description(mut self, d: impl Into<String>) -> Self {
         self.description = d.into();
         self
@@ -231,7 +196,7 @@ impl<C, M, S, Sb, Ac> AddonBuilder<C, M, S, Sb, Ac> {
         self,
         defs: impl IntoIterator<Item = CatalogDef>,
         handler: H,
-    ) -> AddonBuilder<H, M, S, Sb, Ac> {
+    ) -> AddonBuilder<H, M, S> {
         AddonBuilder {
             catalogs: defs.into_iter().collect(),
             catalog_handler: handler,
@@ -241,7 +206,6 @@ impl<C, M, S, Sb, Ac> AddonBuilder<C, M, S, Sb, Ac> {
             description: self.description,
             types: self.types,
             id_prefixes: self.id_prefixes,
-            addon_catalogs: self.addon_catalogs,
             config: self.config,
             behavior_hints: self.behavior_hints,
             logo: self.logo,
@@ -249,11 +213,8 @@ impl<C, M, S, Sb, Ac> AddonBuilder<C, M, S, Sb, Ac> {
             contact_email: self.contact_email,
             meta_types: self.meta_types,
             stream_types: self.stream_types,
-            subtitle_types: self.subtitle_types,
             meta_handler: self.meta_handler,
             stream_handler: self.stream_handler,
-            subtitles_handler: self.subtitles_handler,
-            addon_catalog_handler: self.addon_catalog_handler,
         }
     }
 
@@ -262,7 +223,7 @@ impl<C, M, S, Sb, Ac> AddonBuilder<C, M, S, Sb, Ac> {
         self,
         types: impl IntoIterator<Item = ContentType>,
         handler: H,
-    ) -> AddonBuilder<C, H, S, Sb, Ac> {
+    ) -> AddonBuilder<C, H, S> {
         AddonBuilder {
             meta_types: types.into_iter().collect(),
             meta_handler: handler,
@@ -273,18 +234,14 @@ impl<C, M, S, Sb, Ac> AddonBuilder<C, M, S, Sb, Ac> {
             types: self.types,
             id_prefixes: self.id_prefixes,
             catalogs: self.catalogs,
-            addon_catalogs: self.addon_catalogs,
             config: self.config,
             behavior_hints: self.behavior_hints,
             logo: self.logo,
             background: self.background,
             contact_email: self.contact_email,
             stream_types: self.stream_types,
-            subtitle_types: self.subtitle_types,
             catalog_handler: self.catalog_handler,
             stream_handler: self.stream_handler,
-            subtitles_handler: self.subtitles_handler,
-            addon_catalog_handler: self.addon_catalog_handler,
         }
     }
 
@@ -293,7 +250,7 @@ impl<C, M, S, Sb, Ac> AddonBuilder<C, M, S, Sb, Ac> {
         self,
         types: impl IntoIterator<Item = ContentType>,
         handler: H,
-    ) -> AddonBuilder<C, M, H, Sb, Ac> {
+    ) -> AddonBuilder<C, M, H> {
         AddonBuilder {
             stream_types: types.into_iter().collect(),
             stream_handler: handler,
@@ -304,84 +261,18 @@ impl<C, M, S, Sb, Ac> AddonBuilder<C, M, S, Sb, Ac> {
             types: self.types,
             id_prefixes: self.id_prefixes,
             catalogs: self.catalogs,
-            addon_catalogs: self.addon_catalogs,
             config: self.config,
             behavior_hints: self.behavior_hints,
             logo: self.logo,
             background: self.background,
             contact_email: self.contact_email,
             meta_types: self.meta_types,
-            subtitle_types: self.subtitle_types,
             catalog_handler: self.catalog_handler,
             meta_handler: self.meta_handler,
-            subtitles_handler: self.subtitles_handler,
-            addon_catalog_handler: self.addon_catalog_handler,
         }
     }
 
-    /// Serve subtitles for these types.
-    pub fn subtitles<H: SubtitlesHandler>(
-        self,
-        types: impl IntoIterator<Item = ContentType>,
-        handler: H,
-    ) -> AddonBuilder<C, M, S, H, Ac> {
-        AddonBuilder {
-            subtitle_types: types.into_iter().collect(),
-            subtitles_handler: handler,
-            id: self.id,
-            name: self.name,
-            version: self.version,
-            description: self.description,
-            types: self.types,
-            id_prefixes: self.id_prefixes,
-            catalogs: self.catalogs,
-            addon_catalogs: self.addon_catalogs,
-            config: self.config,
-            behavior_hints: self.behavior_hints,
-            logo: self.logo,
-            background: self.background,
-            contact_email: self.contact_email,
-            meta_types: self.meta_types,
-            stream_types: self.stream_types,
-            catalog_handler: self.catalog_handler,
-            meta_handler: self.meta_handler,
-            stream_handler: self.stream_handler,
-            addon_catalog_handler: self.addon_catalog_handler,
-        }
-    }
-
-    /// Serve catalogues *of other addons*.
-    pub fn addon_catalogs<H: AddonCatalogHandler>(
-        self,
-        defs: impl IntoIterator<Item = CatalogDef>,
-        handler: H,
-    ) -> AddonBuilder<C, M, S, Sb, H> {
-        AddonBuilder {
-            addon_catalogs: defs.into_iter().collect(),
-            addon_catalog_handler: handler,
-            id: self.id,
-            name: self.name,
-            version: self.version,
-            description: self.description,
-            types: self.types,
-            id_prefixes: self.id_prefixes,
-            catalogs: self.catalogs,
-            config: self.config,
-            behavior_hints: self.behavior_hints,
-            logo: self.logo,
-            background: self.background,
-            contact_email: self.contact_email,
-            meta_types: self.meta_types,
-            stream_types: self.stream_types,
-            subtitle_types: self.subtitle_types,
-            catalog_handler: self.catalog_handler,
-            meta_handler: self.meta_handler,
-            stream_handler: self.stream_handler,
-            subtitles_handler: self.subtitles_handler,
-        }
-    }
-
-    pub fn build(mut self) -> Result<Addon<C, M, S, Sb, Ac>, BuildError> {
+    pub fn build(mut self) -> Result<Addon<C, M, S>, BuildError> {
         for (name, v) in [
             ("id", &self.id),
             ("name", &self.name),
@@ -400,7 +291,6 @@ impl<C, M, S, Sb, Ac> AddonBuilder<C, M, S, Sb, Ac> {
         for (resource, types) in [
             (Resource::Meta, &self.meta_types),
             (Resource::Stream, &self.stream_types),
-            (Resource::Subtitles, &self.subtitle_types),
         ] {
             if types.is_empty() {
                 continue;
@@ -410,9 +300,6 @@ impl<C, M, S, Sb, Ac> AddonBuilder<C, M, S, Sb, Ac> {
                 types: types.clone(),
                 id_prefixes: self.id_prefixes.clone(),
             });
-        }
-        if !self.addon_catalogs.is_empty() {
-            resources.push(ResourceEntry::Name(Resource::AddonCatalog));
         }
 
         // Types default to the union of what the handlers were registered for, so a
@@ -424,7 +311,6 @@ impl<C, M, S, Sb, Ac> AddonBuilder<C, M, S, Sb, Ac> {
                 .map(|c| c.content_type)
                 .chain(self.meta_types.iter().copied())
                 .chain(self.stream_types.iter().copied())
-                .chain(self.subtitle_types.iter().copied())
             {
                 if !self.types.contains(&t) {
                     self.types.push(t);
@@ -458,7 +344,6 @@ impl<C, M, S, Sb, Ac> AddonBuilder<C, M, S, Sb, Ac> {
                 types: self.types,
                 catalogs: self.catalogs,
                 id_prefixes: self.id_prefixes,
-                addon_catalogs: self.addon_catalogs,
                 config: self.config,
                 background: self.background,
                 logo: self.logo,
@@ -468,8 +353,6 @@ impl<C, M, S, Sb, Ac> AddonBuilder<C, M, S, Sb, Ac> {
             catalog: self.catalog_handler,
             meta: self.meta_handler,
             stream: self.stream_handler,
-            subtitles: self.subtitles_handler,
-            addon_catalog: self.addon_catalog_handler,
         })
     }
 }
