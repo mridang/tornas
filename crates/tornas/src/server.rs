@@ -24,13 +24,10 @@ pub async fn run_server(opts: ServerOpts) -> anyhow::Result<()> {
         .tls_opt(opts.tls_cert.clone().zip(opts.tls_key.clone()))
         .http_layer(crate::http::shared(engine.clone()))
         .add(crate::http::routes(engine.clone()))
-        .add(crate::adapters::stremio::router(
-            engine.library.clone(),
-            opts.addon_name
-                .clone()
-                .unwrap_or_else(|| "Tornas".to_owned()),
-            opts.public_url.clone(),
-        ))
+        // Each playback protocol brings its own routes, including its own `/video`
+        // byte route: Stremio at `/video/...`, DLNA at `/dlna/video/...`.
+        .add(crate::adapters::stremio::router(engine.clone()))
+        .add(crate::adapters::dlna::video_router(engine.clone()))
         .add_opt(Dlna::start(&opts, &engine).await)
         .add_opt(Mdns::from_opts(&opts))
         .add(EngineWorkers(engine.clone()))

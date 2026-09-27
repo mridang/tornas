@@ -6,7 +6,21 @@
 
 use std::sync::Arc;
 
+use anyhow::Context;
+use axum::{
+    Router,
+    extract::{Path, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
+    response::{IntoResponse, Response},
+    routing::get,
+};
+use axum_extra::{TypedHeader, headers::Range};
+use axum_range::{KnownSize, Ranged};
+use serde::Deserialize;
+use tracing::debug;
+
 use crate::{
+    http::{ApiError, AppState},
     media_catalog::{Library, MediaEntry},
     utils::human_bytes,
 };
@@ -27,23 +41,87 @@ pub struct StremioLibrary(pub Arc<dyn Library>);
 /// The addon this crate serves: catalogue, metadata and streams, all from the library.
 pub type TornasAddon = stremio::Addon<StremioLibrary>;
 
-/// The Stremio addon as an axum router, ready to merge at the root. Panics only on
-/// a malformed manifest, which is a programming error, not a runtime condition.
-pub fn router(
-    library: Arc<dyn Library>,
-    addon_name: String,
-    public_url: Option<String>,
-) -> axum::Router {
-    let addon = addon(StremioLibrary(library), addon_name).expect("valid addon manifest");
-    stremio::router_with(
+/// The Stremio addon as an axum router, ready to merge at the root: the manifest
+/// and catalog/meta/stream endpoints, plus this protocol's own `/video` byte route.
+/// Panics only on a malformed manifest, a programming error, not a runtime one.
+pub fn router(engine: AppState) -> Router {
+    let name = engine
+        .opts
+        .addon_name
+        .clone()
+        .unwrap_or_else(|| "Tornas".to_owned());
+    let addon = addon(StremioLibrary(engine.library.clone()), name).expect("valid addon manifest");
+    let addon_router = stremio::router_with(
         addon,
         stremio::RouterOptions {
             // tornas serves its own dashboard at `/` and applies its own CORS and
             // source-address checks to every route, these included.
             fallback: false,
-            public_url,
+            public_url: engine.opts.public_url.clone(),
         },
+    );
+    // The bytes Stremio players fetch. This is the URL `stream_for` hands out
+    // (`MediaEntry::video_path`), so keep the two in step.
+    addon_router.merge(
+        Router::new()
+            .route("/video/{imdb_id}/{filename}", get(video))
+            .route("/video/{imdb_id}", get(video))
+            .with_state(engine),
     )
+}
+
+/// The path parameters of `/video/{imdb_id}/{filename}`.
+#[derive(Deserialize)]
+struct VideoPath {
+    imdb_id: String,
+    /// Present only so the pretty URL matches; the file is chosen by imdb id.
+    #[allow(dead_code)]
+    filename: Option<String>,
+}
+
+/// Serve the movie's bytes, with range support (seeking, 206/416) from `axum-range`.
+async fn video(
+    State(e): State<AppState>,
+    Path(p): Path<VideoPath>,
+    range: Option<TypedHeader<Range>>,
+) -> Result<Response, ApiError> {
+    let (handle, file_idx, filename) = e.stream_target(&p.imdb_id)?;
+    let stream = handle.stream(file_idx).await.context("opening stream")?;
+    let len = stream.len();
+    let body = KnownSize::sized(stream, len);
+    let range = range.map(|TypedHeader(r)| r);
+
+    let mut out = HeaderMap::new();
+    if let Some(mime) = mime_guess::from_path(&filename).first_raw() {
+        out.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
+    }
+
+    debug!(imdb = p.imdb_id, ?range, "stremio video request");
+
+    let response = (out, Ranged::new(range, body)).into_response();
+    count_served(&response, len);
+    Ok(response)
+}
+
+/// Count what was actually served, by the status `axum-range` chose.
+fn count_served(response: &Response, fallback_len: u64) {
+    if matches!(
+        response.status(),
+        StatusCode::OK | StatusCode::PARTIAL_CONTENT
+    ) {
+        let served = response
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(fallback_len);
+        let kind = if response.status() == StatusCode::PARTIAL_CONTENT {
+            "range"
+        } else {
+            "full"
+        };
+        crate::metrics::stream(kind, served);
+    }
 }
 
 /// Assemble the addon. The manifest follows from the handlers registered here.

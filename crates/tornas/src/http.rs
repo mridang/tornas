@@ -1,14 +1,14 @@
-//! The HTTP surface: the JSON API, the dashboard, the Stremio addon endpoints,
-//! video streaming and the mounted UPnP router.
+//! The HTTP surface: the JSON API and the dashboard.
 //!
 //! This file owns only the shared plumbing — application state, the error envelope,
-//! and the route table. Handlers live in the submodules.
+//! and the route table. Handlers live in the submodules. Playback (the Stremio
+//! addon, the DLNA browse tree and each protocol's own `/video` byte route) belongs
+//! to the adapters and is merged in by `router()`.
 
 pub mod acl;
 pub mod api;
 pub mod dashboard;
 pub mod middleware;
-pub mod video;
 
 use std::sync::Arc;
 
@@ -29,7 +29,6 @@ use api::{
 };
 use dashboard::index;
 use middleware::{allow_private_network, require_allowed_source, require_token};
-use video::video;
 
 pub type AppState = Arc<Engine>;
 
@@ -127,9 +126,9 @@ where
     }
 }
 
-/// This crate's own routes, with their shared engine state applied: the dashboard,
-/// the JSON API and the video endpoint. The Stremio addon and the UPnP router bring
-/// their own state and are merged separately.
+/// This crate's own routes, with their shared engine state applied: the dashboard
+/// and the JSON API. The Stremio and DLNA routers bring their own state and are
+/// merged separately.
 pub fn routes(engine: AppState) -> Router {
     Router::new()
         .route("/", get(index))
@@ -156,17 +155,6 @@ pub fn routes(engine: AppState) -> Router {
         .route(
             "/api/movies/{imdb_id}",
             get(api_get).patch(api_patch).delete(api_delete),
-        )
-        // Video bytes, shared by every player. The handler is a plain range
-        // byte-server; the DLNA adapter's layer adds the response headers TVs need,
-        // scoped to these routes so no protocol specifics leak into the handler.
-        .merge(
-            Router::new()
-                .route("/video/{imdb_id}/{filename}", get(video))
-                .route("/video/{imdb_id}", get(video))
-                .route_layer(axum::middleware::from_fn(
-                    crate::adapters::dlna::stream_headers,
-                )),
         )
         .with_state(engine)
 }
@@ -206,15 +194,11 @@ pub fn shared(engine: AppState) -> impl FnOnce(Router) -> Router {
 /// optionally the UPnP router, behind the shared middleware. The addon is merged at
 /// the root so URLs people already installed keep working.
 pub fn router(engine: AppState, upnp: Option<Router>) -> Router {
-    let mut app = routes(engine.clone()).merge(crate::adapters::stremio::router(
-        engine.library.clone(),
-        engine
-            .opts
-            .addon_name
-            .clone()
-            .unwrap_or_else(|| "Tornas".to_owned()),
-        engine.opts.public_url.clone(),
-    ));
+    // Each playback protocol brings its own routes, including its own `/video` byte
+    // route: Stremio at `/video/...`, DLNA at `/dlna/video/...`.
+    let mut app = routes(engine.clone())
+        .merge(crate::adapters::stremio::router(engine.clone()))
+        .merge(crate::adapters::dlna::video_router(engine.clone()));
     if let Some(u) = upnp {
         app = app.merge(Router::new().nest("/upnp", u));
     }
