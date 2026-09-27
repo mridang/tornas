@@ -45,8 +45,6 @@ tornas_max_active_downloads: ""
 # BitTorrent engine. Empty keeps the server's default (see the README).
 tornas_bind_device: ""
 tornas_utp: false
-tornas_peer_blocklist: ""
-tornas_peer_allowlist: ""
 tornas_peer_limit: ""
 tornas_concurrent_checks: ""
 tornas_announce_port: ""
@@ -87,10 +85,6 @@ tornas_trackers_sources:
     url: https://cf.trackerslist.com/best.txt
 tornas_trackers_static_add: []
 tornas_trackers_static_block: []
-# Speed limits by time of day, rendered as [[bandwidth.schedule]]. Each entry:
-# from, to ("HH:MM"), and optionally days, download, upload.
-# Example: [{days: [fri], from: "23:30", to: "08:00", download: unlimited}]
-tornas_bandwidth_schedule: []
 
 # ---- after changes ----------------------------------------------------------
 # Wait for /healthz and compare /api/config with these variables. Needs loopback

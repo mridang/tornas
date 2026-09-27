@@ -33,8 +33,8 @@ use video::video;
 
 pub type AppState = Arc<Engine>;
 
-/// JSON error envelope: `{"error": {"kind": "...", "message": "..."}}` with a status
-/// derived from the engine's typed fault kind.
+/// An API error, rendered as an RFC 7807 problem detail (`application/problem+json`)
+/// with a status derived from the engine's typed fault kind. See `IntoResponse`.
 pub struct ApiError {
     status: StatusCode,
     kind: &'static str,
