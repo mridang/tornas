@@ -1,14 +1,15 @@
-//! OpenTelemetry. A Prometheus meter provider is always installed so `/metrics`
-//! works; when an OTLP endpoint is configured, traces, logs and metrics are also
-//! pushed to the collector over OTLP/gRPC.
+//! Observability: the OpenTelemetry providers and the `tracing` subscriber.
 //!
-//! This module owns the SDK providers so they outlive the layers and instruments
-//! that reference them and can be flushed on shutdown. Building the `tracing`
-//! layers is [`logging`](crate::logging)'s job and the metric instruments are
-//! [`metrics`](crate::metrics)', so the wiring stays where it belongs.
+//! [`init_providers`] builds and owns the SDK providers — a Prometheus meter
+//! provider is always installed so `/metrics` works, and when an OTLP endpoint is
+//! configured, traces, logs and metrics are also pushed to a collector over
+//! OTLP/gRPC. [`init_logging`] installs the `tracing` subscriber that logs to
+//! stdout and, when export is on, feeds the providers. The metric *instruments*
+//! themselves live in [`metrics`](crate::metrics).
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
 use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::WithExportConfig as _;
 use opentelemetry_sdk::{
     Resource,
@@ -16,6 +17,7 @@ use opentelemetry_sdk::{
     metrics::{PeriodicReader, SdkMeterProvider},
     trace::SdkTracerProvider,
 };
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// The telemetry providers. The meter provider and its Prometheus registry always
 /// exist; the OTLP tracer and logger only when export is on.
@@ -29,7 +31,7 @@ pub struct Telemetry {
 /// Install the meter provider (always) and, when `endpoint` is set, the OTLP
 /// exporters. Sets the global meter provider so [`opentelemetry::global::meter`]
 /// works from anywhere.
-pub fn init(endpoint: Option<&str>, service_name: &str) -> anyhow::Result<Telemetry> {
+pub fn init_providers(endpoint: Option<&str>, service_name: &str) -> anyhow::Result<Telemetry> {
     let endpoint = endpoint.map(str::trim).filter(|e| !e.is_empty());
     let resource = Resource::builder()
         .with_service_name(service_name.to_owned())
@@ -131,4 +133,27 @@ impl Telemetry {
             tracing::warn!("shutting down logger provider: {e}");
         }
     }
+}
+
+/// Install the global `tracing` subscriber. `filter` is a `tracing` env-filter
+/// directive such as `info` or `tornas=debug,librqbit=info`. The daemon logs to
+/// stdout; `telemetry` adds OTLP log and span layers when export is on. Safe to
+/// call once.
+pub fn init_logging(filter: &str, telemetry: &Telemetry) -> anyhow::Result<()> {
+    let env_filter = EnvFilter::try_new(filter).unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let spans = telemetry
+        .tracer()
+        .map(|tracer| tracing_opentelemetry::layer().with_tracer(tracer));
+    let logs = telemetry
+        .logger_provider()
+        .map(OpenTelemetryTracingBridge::new);
+
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(tracing_subscriber::fmt::layer().with_target(false))
+        .with(spans)
+        .with(logs)
+        .try_init()
+        .map_err(|e| anyhow!("installing logger: {e}"))
 }

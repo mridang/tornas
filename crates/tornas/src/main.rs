@@ -10,10 +10,10 @@ fn main() -> anyhow::Result<()> {
     // The OTLP exporters build a tonic/hyper client that needs a runtime context,
     // so this runs inside the runtime, before logging is installed on top of it.
     let telemetry = rt.block_on(async {
-        tornas::telemetry::init(cli.otlp_endpoint.as_deref(), &cli.otel_service_name)
+        tornas::o11y::init_providers(cli.otlp_endpoint.as_deref(), &cli.otel_service_name)
     })?;
     tornas::metrics::set_registry(telemetry.registry());
-    tornas::logging::init(&cli.log, &telemetry)?;
+    tornas::o11y::init_logging(&cli.log, &telemetry)?;
 
     let result = rt.block_on(async move {
         match cli.cmd {

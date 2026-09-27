@@ -175,7 +175,7 @@ pub fn init_telemetry() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        let telemetry = tornas::telemetry::init(None, "tornas").expect("telemetry init");
+        let telemetry = tornas::o11y::init_providers(None, "tornas").expect("telemetry init");
         tornas::metrics::set_registry(telemetry.registry());
         tornas::metrics::install();
         // Leak it: the providers must outlive every test in the process.

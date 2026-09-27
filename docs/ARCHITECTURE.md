@@ -24,9 +24,8 @@ src/
   mdns.rs            DNS-SD advertisement                               ← no crate:: imports
   adapters/          implements those protocols for this crate's types
 
-  telemetry.rs       OpenTelemetry providers (meter always, OTLP traces/logs when configured)
+  o11y.rs            observability: OTel providers + the tracing subscriber (stdout + OTLP)
   metrics.rs         the instruments; /metrics scrape and OTLP push
-  logging.rs         tracing subscriber: stdout (systemd/Docker capture it) + OTLP
   schedule.rs        weekly bandwidth windows (pure)
   trackers.rs        public tracker feed
   tmdb.rs            TMDB client
@@ -80,21 +79,21 @@ because it implements a trait from `upnp-serve`, which is a git dependency.
 ## Dependency direction
 
 ```
-main.rs → telemetry.rs, logging.rs → run_server (lib.rs, wiring)
+main.rs → o11y.rs → run_server (lib.rs, wiring)
   ├─→ service/ ──→ runs the components below                     (leaf: nothing from this crate)
   ├─→ http/ ────→ engine/ ─→ media_catalog (store + eviction + tmdb), schedule, trackers, tuning
   ├─→ adapters/ ─→ media_catalog (Library), and the protocol modules  (no engine)
   ├─→ stremio/, dlna/, mdns.rs                                   (leaves: nothing from this crate)
-  ├─→ telemetry.rs, metrics.rs, logging.rs, utils/mount.rs
+  ├─→ o11y.rs, metrics.rs, utils/mount.rs
   └─→ cli/                        (speaks HTTP to a running server, not the engine)
 ```
 
 `cli/` never touches the engine; it is an API client, which is why `tornas status`
 works from any machine on the network.
 
-## Telemetry
+## Observability
 
-`telemetry.rs` owns the OpenTelemetry SDK providers so they outlive the layers and
+`o11y.rs` owns the OpenTelemetry SDK providers so they outlive the layers and
 instruments that reference them. A Prometheus meter provider is always installed so
 `/metrics` works; when `TORNAS_OTLP_ENDPOINT` is set, traces, logs and metrics are
 also pushed to a collector over OTLP/gRPC.
@@ -102,7 +101,7 @@ also pushed to a collector over OTLP/gRPC.
 `metrics.rs` holds the instruments. Event counters and the HTTP histogram are
 synchronous; everything describing current state is an **observable** instrument
 whose callback reads typed engine data at collection time, so there is no
-hand-written text exposition. `logging.rs` builds the `tracing` subscriber: a
+hand-written text exposition. `o11y.rs` also builds the `tracing` subscriber: a
 console layer to stdout (systemd/journald or Docker capture it and own retention),
 plus OTLP log and span layers when export is on.
 

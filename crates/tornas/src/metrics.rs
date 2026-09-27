@@ -6,7 +6,7 @@
 //! **observable** instrument whose callback reads typed engine data at collection
 //! time; those live in [`observe`], registered once the engine has started.
 //!
-//! The meter provider and its Prometheus reader live in [`telemetry`](crate::telemetry);
+//! The meter provider and its Prometheus reader live in [`o11y`](crate::o11y);
 //! `/metrics` encodes that reader's registry, and when an OTLP endpoint is
 //! configured the same instruments are pushed to the collector.
 
