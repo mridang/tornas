@@ -157,9 +157,17 @@ pub fn routes(engine: AppState) -> Router {
             "/api/movies/{imdb_id}",
             get(api_get).patch(api_patch).delete(api_delete),
         )
-        // Video bytes, shared by Stremio and DLNA.
-        .route("/video/{imdb_id}/{filename}", get(video))
-        .route("/video/{imdb_id}", get(video))
+        // Video bytes, shared by every player. The handler is a plain range
+        // byte-server; the DLNA adapter's layer adds the response headers TVs need,
+        // scoped to these routes so no protocol specifics leak into the handler.
+        .merge(
+            Router::new()
+                .route("/video/{imdb_id}/{filename}", get(video))
+                .route("/video/{imdb_id}", get(video))
+                .route_layer(axum::middleware::from_fn(
+                    crate::adapters::dlna::stream_headers,
+                )),
+        )
         .with_state(engine)
 }
 

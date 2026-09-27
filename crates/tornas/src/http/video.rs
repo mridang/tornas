@@ -1,6 +1,10 @@
-//! `/video`: the bytes themselves, shared by Stremio players and DLNA renderers.
-//! Range handling (seeking, 206/416) is done by `axum-range`; we add the content
-//! type and the two DLNA headers TVs ask for.
+//! `/video`: the bytes themselves, shared by every player.
+//!
+//! A plain range byte-server: `axum-range` does seeking (206/416), we add the
+//! content type and count what was served. Nothing here knows any streaming
+//! protocol — the DLNA response headers TVs need are added by a layer the DLNA
+//! adapter owns (`adapters::dlna::stream_headers`), applied to this route in the
+//! router. The handler stays generic.
 
 use anyhow::Context;
 use axum::{
@@ -28,7 +32,6 @@ pub(super) async fn video(
     State(e): State<AppState>,
     Path(p): Path<VideoPath>,
     range: Option<TypedHeader<Range>>,
-    headers: HeaderMap,
 ) -> ApiResult<Response> {
     let (handle, file_idx, filename) = e.stream_target(&p.imdb_id)?;
     let stream = handle.stream(file_idx).await.context("opening stream")?;
@@ -39,24 +42,6 @@ pub(super) async fn video(
     let mut out = HeaderMap::new();
     if let Some(mime) = mime_guess::from_path(&filename).first_raw() {
         out.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
-    }
-    // DLNA renderers send these; answering them makes seeking work on TVs. The
-    // endpoint is shared, so it speaks a little DLNA even though most callers (the
-    // web player) ignore it.
-    if headers
-        .get("getcontentFeatures.dlna.org")
-        .is_some_and(|v| v.as_bytes() == b"1")
-    {
-        out.insert(
-            "contentFeatures.dlna.org",
-            HeaderValue::from_static("DLNA.ORG_OP=01"),
-        );
-    }
-    if headers.get("transferMode.dlna.org").is_some() {
-        out.insert(
-            "transferMode.dlna.org",
-            HeaderValue::from_static("Streaming"),
-        );
     }
 
     debug!(imdb = p.imdb_id, ?range, "video request");
