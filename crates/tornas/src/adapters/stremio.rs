@@ -8,12 +8,12 @@ use std::sync::Arc;
 
 use crate::{
     media_catalog::{Library, MediaEntry},
-    stremio::{
-        AddonBuilder, BuildError, CatalogDef, CatalogRequest, CatalogResponse, ContentType, Error,
-        ExtraDef, Handler, Meta, MetaPreview, MetaRequest, MetaResponse, PosterShape, Reply,
-        Stream, StreamBehaviorHints, StreamRequest, StreamResponse, StreamSource, Video,
-    },
     utils::human_bytes,
+};
+use stremio::{
+    AddonBuilder, BuildError, CatalogDef, CatalogRequest, CatalogResponse, ContentType, Error,
+    ExtraDef, Handler, Meta, MetaPreview, MetaRequest, MetaResponse, PosterShape, Reply, Stream,
+    StreamBehaviorHints, StreamRequest, StreamResponse, StreamSource, Video,
 };
 
 /// The id of the single catalogue this addon publishes.
@@ -25,7 +25,7 @@ pub const CATALOG_ID: &str = "local";
 pub struct StremioLibrary(pub Arc<dyn Library>);
 
 /// The addon this crate serves: catalogue, metadata and streams, all from the library.
-pub type TornasAddon = crate::stremio::Addon<StremioLibrary>;
+pub type TornasAddon = stremio::Addon<StremioLibrary>;
 
 /// The Stremio addon as an axum router, ready to merge at the root. Panics only on
 /// a malformed manifest, which is a programming error, not a runtime condition.
@@ -35,9 +35,9 @@ pub fn router(
     public_url: Option<String>,
 ) -> axum::Router {
     let addon = addon(StremioLibrary(library), addon_name).expect("valid addon manifest");
-    crate::stremio::router_with(
+    stremio::router_with(
         addon,
-        crate::stremio::RouterOptions {
+        stremio::RouterOptions {
             // tornas serves its own dashboard at `/` and applies its own CORS and
             // source-address checks to every route, these included.
             fallback: false,

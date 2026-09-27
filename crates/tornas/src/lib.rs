@@ -27,7 +27,6 @@ pub mod media_catalog;
 pub mod metrics;
 pub mod o11y;
 pub mod schedule;
-pub mod stremio;
 pub use service::systemd;
 pub mod peerlist;
 pub mod server;

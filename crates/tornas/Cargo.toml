@@ -61,6 +61,7 @@ humantime-serde = "1"
 mdns-sd = "0.21"
 mdns = { path = "../mdns" }
 service = { path = "../service" }
+stremio = { path = "../stremio" }
 sd-notify = "0.5"
 sha1w = { package = "librqbit-sha1-wrapper", git = "https://github.com/ikatson/rqbit", rev = "002a348", default-features = false, features = ["sha1-ring"] }
 problemdetails = { version = "0.6.0", features = ["axum"] }
