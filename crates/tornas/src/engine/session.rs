@@ -21,9 +21,9 @@ use tracing::{debug, info, warn};
 use crate::{
     config::ServerOpts,
     media_catalog::{MediaCatalog, TorrentRow},
-    tmdb::Tmdb,
     trackers::TrackerFeed,
 };
+use tmdb::Tmdb;
 
 use super::*;
 

@@ -27,7 +27,6 @@ src/
   o11y.rs            observability: OTel providers + the tracing subscriber (stdout + OTLP)
   metrics.rs         the instruments; /metrics scrape and OTLP push
   trackers.rs        public tracker feed
-  tmdb.rs            TMDB client
   fixtures.rs        test fixture generator and seeder
 ```
 

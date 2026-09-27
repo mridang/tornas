@@ -27,7 +27,6 @@ pub mod metrics;
 pub mod o11y;
 pub use service::systemd;
 pub mod server;
-pub mod tmdb;
 pub mod trackers;
 pub mod utils;
 

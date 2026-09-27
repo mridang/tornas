@@ -14,8 +14,9 @@ use anyhow::Context;
 
 pub use store::{Catalog, Event, Movie, TorrentRow};
 
-use crate::{tmdb::Tmdb, utils::now_secs};
+use crate::utils::now_secs;
 use eviction::{Candidate, Plan, PlanError};
+use tmdb::Tmdb;
 
 /// The library: what movies exist, what backs them, and the budget that decides
 /// which get evicted.
