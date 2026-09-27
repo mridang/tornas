@@ -17,10 +17,10 @@ pub mod builder;
 pub mod extra;
 pub mod handler;
 pub mod model;
-pub mod router;
+pub mod server;
 
 pub use builder::{Addon, AddonBuilder, BuildError};
 pub use extra::Extra;
 pub use handler::{CatalogRequest, Error, Handler, MetaRequest, Reply, StreamRequest};
 pub use model::*;
-pub use router::{RouterOptions, router, router_with};
+pub use server::{RouterOptions, router, router_with};

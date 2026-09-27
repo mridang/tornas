@@ -3,12 +3,12 @@
 //! Knows nothing about the application: no engine, no catalog, no movies. What a TV
 //! sees is decided entirely by the [`Browsable`] implementation handed to
 //! [`Directory`]. Laid out like the `stremio` crate: `handler` is the trait the app
-//! implements, `model` the data types, `browse` the server.
+//! implements, `model` the data types, `server` the server.
 
-pub mod browse;
 pub mod handler;
 pub mod model;
+pub mod server;
 
-pub use browse::Directory;
 pub use handler::Browsable;
 pub use model::MediaItem;
+pub use server::Directory;

@@ -53,8 +53,9 @@ vocabulary, and gets it through a trait the app implements:
 
 The two protocol crates (`stremio`, `dlna`) are laid out the same way so they read
 alike: `handler.rs` holds the trait the app implements, `model.rs` the wire types,
-and the rest is the protocol's own server (`router.rs`/`builder.rs` for Stremio,
-`browse.rs` for DLNA). Stremio simply has more files because it is a bigger protocol.
+and `server.rs` the protocol server. Stremio adds `builder.rs` (manifest assembly)
+and `extra.rs` (query-in-path parsing) — features DLNA does not need — since it is
+a bigger protocol.
 
 The app feeds both from one place: `media_catalog::Library` yields `MediaEntry` —
 the completed media as plain data (title, images, genres, the playable file).
