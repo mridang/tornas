@@ -103,9 +103,6 @@ impl<T> From<T> for Reply<T> {
     }
 }
 
-/// The user-data segment of the URL, when the addon declares `config`.
-pub type Config = Option<String>;
-
 /// Where this request reached us, e.g. `http://box.lan:3030`, with no trailing
 /// slash. Addons that serve their own files need it to build absolute URLs, and
 /// only the transport knows it.
@@ -117,7 +114,6 @@ pub struct CatalogRequest {
     pub content_type: ContentType,
     pub id: String,
     pub extra: Extra,
-    pub config: Config,
 }
 
 #[derive(Debug, Clone)]
@@ -125,7 +121,6 @@ pub struct MetaRequest {
     pub base_url: BaseUrl,
     pub content_type: ContentType,
     pub id: String,
-    pub config: Config,
 }
 
 #[derive(Debug, Clone)]
@@ -134,7 +129,6 @@ pub struct StreamRequest {
     pub content_type: ContentType,
     /// A *video* id: the meta id for a movie, `tt123:1:2` for an episode.
     pub id: String,
-    pub config: Config,
 }
 
 pub trait CatalogHandler: Send + Sync + 'static {

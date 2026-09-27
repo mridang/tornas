@@ -26,4 +26,4 @@ pub use handler::{
     StreamRequest,
 };
 pub use model::*;
-pub use router::{ConfigMode, RouterOptions, router, router_with};
+pub use router::{RouterOptions, router, router_with};

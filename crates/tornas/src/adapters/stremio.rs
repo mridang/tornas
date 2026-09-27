@@ -41,9 +41,7 @@ pub fn router(
         crate::stremio::RouterOptions {
             // tornas serves its own dashboard at `/` and applies its own CORS and
             // source-address checks to every route, these included.
-            landing: false,
             fallback: false,
-            config_mode: crate::stremio::ConfigMode::Disabled,
             public_url,
         },
     )
