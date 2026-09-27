@@ -1,0 +1,13 @@
+[package]
+name = "mdns"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow = "1"
+mdns-sd = "0.21"
+tracing = "0.1"

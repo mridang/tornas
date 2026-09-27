@@ -126,7 +126,7 @@ impl Component for Dlna {
 
 /// mDNS advertisement, held for the lifetime of the process.
 struct Mdns {
-    service: crate::mdns::Service,
+    service: mdns::Service,
     ip: IpAddr,
 }
 
@@ -135,7 +135,7 @@ impl Mdns {
         if opts.disable_mdns || opts.http_listen.ip().is_loopback() {
             return None;
         }
-        let service = crate::mdns::Service::new(
+        let service = mdns::Service::new(
             "_http._tcp.local.",
             &opts.mdns_name,
             opts.http_listen.port(),

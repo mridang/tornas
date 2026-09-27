@@ -23,7 +23,6 @@ pub mod dlna;
 pub mod engine;
 pub mod fixtures;
 pub mod http;
-pub mod mdns;
 pub mod media_catalog;
 pub mod metrics;
 pub mod o11y;
