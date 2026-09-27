@@ -5,7 +5,6 @@
 //! submodule, and each one adds its own `impl Engine` block.
 
 pub mod add;
-pub mod bandwidth;
 pub mod disk;
 pub mod eviction;
 pub mod fault;
@@ -58,10 +57,6 @@ pub struct Engine {
     disk_missing: std::sync::atomic::AtomicBool,
     /// Serialises add + evict so two concurrent adds cannot both pass the budget check.
     add_lock: tokio::sync::Mutex<()>,
-    /// Machine-dependent limits actually in force.
-    /// Compiled `[bandwidth]` windows and the index of the one in force.
-    bandwidth: Vec<crate::schedule::Window>,
-    bandwidth_active: parking_lot::Mutex<Option<usize>>,
 }
 
 fn hash_hex(h: Id20) -> String {

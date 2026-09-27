@@ -1023,17 +1023,12 @@
           "download_limit": {
             "type": "integer",
             "nullable": true,
-            "description": "global download limit in force (after the bandwidth schedule), bytes/s; null = unlimited"
+            "description": "global download limit in force, bytes/s; null = unlimited"
           },
           "upload_limit": {
             "type": "integer",
             "nullable": true,
             "description": "global upload limit in force, bytes/s; null = unlimited"
-          },
-          "schedule_window": {
-            "type": "integer",
-            "nullable": true,
-            "description": "index of the [[bandwidth.schedule]] window in force"
           },
           "queued": {
             "type": "integer",

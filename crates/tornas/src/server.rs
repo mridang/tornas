@@ -168,7 +168,6 @@ impl Component for EngineWorkers {
         let e = self.0;
         svc.spawn("sweep", e.clone().sweep_forever());
         svc.spawn("pause-watch", e.clone().pause_watch_forever());
-        svc.spawn("bandwidth", e.clone().bandwidth_forever());
         svc.spawn("trackers", e.clone().tracker_refresh_forever());
         svc.spawn("status", status_loop(e));
     }

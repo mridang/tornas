@@ -175,7 +175,6 @@ pub(super) async fn api_config(State(e): State<AppState>) -> impl IntoResponse {
         "dlna": !e.opts.disable_dlna,
         "dht": !e.opts.disable_dht,
         "tmdb": e.library.tmdb().is_some(),
-        "bandwidth": e.file_config.bandwidth,
         "ratelimit_download": e.opts.ratelimit_download,
         "ratelimit_upload": e.opts.ratelimit_upload,
         "max_active_downloads": e.opts.max_active_downloads,

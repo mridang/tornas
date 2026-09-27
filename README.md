@@ -86,7 +86,7 @@ Three layers, later ones win: the TOML config file (found automatically as above
 | `--disable-dlna` | `TORNAS_DLNA_DISABLE` | | |
 | `--listen-port` | `RQBIT_LISTEN_PORT` | random | BitTorrent port |
 | `--disable-dht` | `RQBIT_DHT_DISABLE` | | |
-| `--ratelimit-download` / `--ratelimit-upload` | `TORNAS_RATELIMIT_DOWNLOAD` / `_UPLOAD` | unlimited | global limits in bytes/s; see [Bandwidth schedule](#bandwidth-schedule) |
+| `--ratelimit-download` / `--ratelimit-upload` | `TORNAS_RATELIMIT_DOWNLOAD` / `_UPLOAD` | unlimited | global limits in bytes/s |
 | `--max-active-downloads` | `TORNAS_MAX_ACTIVE_DOWNLOADS` | unlimited | download this many at once; the rest wait, oldest first |
 
 ### BitTorrent engine
@@ -120,30 +120,6 @@ curl -X PATCH localhost:3030/api/movies/tt0111161 -H 'content-type: application/
 ### Download queue
 
 With `--max-active-downloads 2`, only two movies download at a time and the rest show as **queued**, starting oldest first as slots free up. Finished movies, paused ones and streams from disk do not count. Unset, everything downloads at once.
-
-### Bandwidth schedule
-
-Limits that change with the time of day go in `config.toml`. The first window that matches the local time wins; outside all windows the global `--ratelimit-*` values apply. A window whose `to` is earlier than its `from` runs past midnight, and `days` names the day it starts on.
-
-```toml
-# Weekday evenings: keep the connection free for everyone else.
-[[bandwidth.schedule]]
-days = ["mon", "tue", "wed", "thu", "fri"]
-from = "18:00"
-to = "23:30"
-download = "1M"
-upload = "128K"
-
-# Friday night into Saturday morning: no limits.
-[[bandwidth.schedule]]
-days = ["fri"]
-from = "23:30"
-to = "08:00"
-download = "unlimited"
-upload = "unlimited"
-```
-
-Leave out `download` or `upload` to keep the global value for that direction. The schedule is checked every 30 seconds and changes apply to running downloads at once. `tornas config check` catches bad times, unknown days and empty windows. `/api/status` shows the limits in force (`session.download_limit`, `session.schedule_window`), as do the dashboard and the `tornas_ratelimit_*_bytes_per_second` metrics.
 
 ## Public trackers
 
@@ -304,7 +280,7 @@ Per-torrent series carry only an `imdb_id` label; the descriptive fields (info h
 | DHT (UDP) | `tornas_dht_enabled`, `tornas_dht_nodes{family}`, `tornas_dht_outstanding_requests` |
 | Tracker feed | `tornas_trackers_enabled`, `tornas_trackers_active{scheme}`, `tornas_tracker_list_age_seconds`, `tornas_tracker_list_rejected`, `tornas_tracker_list_deduplicated`, `tornas_tracker_source_up{source}`, `tornas_tracker_source_accepted{source}` |
 | Pause and disk | `tornas_paused`, `tornas_paused_for_missing_disk`, `tornas_data_disk_mounted`, `tornas_pause_remaining_seconds`, `tornas_pauses_total`, `tornas_resumes_total{trigger}` |
-| Limits and queue | `tornas_ratelimit_download_bytes_per_second`, `tornas_ratelimit_upload_bytes_per_second` (0 = unlimited), `tornas_bandwidth_window`, `tornas_queued_downloads`, `tornas_max_active_downloads`, `tornas_peer_limit`, `tornas_concurrent_checks` |
+| Limits and queue | `tornas_ratelimit_download_bytes_per_second`, `tornas_ratelimit_upload_bytes_per_second` (0 = unlimited), `tornas_queued_downloads`, `tornas_max_active_downloads`, `tornas_peer_limit`, `tornas_concurrent_checks` |
 | Events | `tornas_adds_total{result}`, `tornas_evictions_total`, `tornas_evicted_bytes_total`, `tornas_stalled_evictions_total`, `tornas_removals_total`, `tornas_seeding_paused_total`, `tornas_streams_total{kind}`, `tornas_stream_bytes_total`, `tornas_tmdb_errors_total`, `tornas_updates_installed_total` |
 | HTTP | `tornas_http_requests_total{route,method,status}`, `tornas_http_request_duration_seconds{route}` (histogram), `tornas_unauthorized_total`, `tornas_forbidden_source_total` |
 

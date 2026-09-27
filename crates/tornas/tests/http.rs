@@ -320,12 +320,7 @@ async fn api_stremio_and_video() {
 
     // Status carries the new session fields the dashboard reads.
     let (_, status) = s.json(M::GET, "/api/status", None).await;
-    for k in [
-        "download_limit",
-        "upload_limit",
-        "schedule_window",
-        "queued",
-    ] {
+    for k in ["download_limit", "upload_limit", "queued"] {
         assert!(
             status["session"].get(k).is_some(),
             "session.{k} missing: {status}"

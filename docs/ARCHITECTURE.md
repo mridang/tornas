@@ -26,7 +26,6 @@ src/
 
   o11y.rs            observability: OTel providers + the tracing subscriber (stdout + OTLP)
   metrics.rs         the instruments; /metrics scrape and OTLP push
-  schedule.rs        weekly bandwidth windows (pure)
   trackers.rs        public tracker feed
   tmdb.rs            TMDB client
   fixtures.rs        test fixture generator and seeder
@@ -80,7 +79,7 @@ because it implements a trait from `upnp-serve`, which is a git dependency.
 ```
 main.rs → o11y.rs → run_server (lib.rs, wiring)
   ├─→ service/ ──→ runs the components below                     (leaf: nothing from this crate)
-  ├─→ http/ ────→ engine/ ─→ media_catalog (store + eviction + tmdb), schedule, trackers
+  ├─→ http/ ────→ engine/ ─→ media_catalog (store + eviction + tmdb), trackers
   ├─→ adapters/ ─→ media_catalog (Library), and the protocol modules  (no engine)
   ├─→ stremio/, dlna/, mdns.rs                                   (leaves: nothing from this crate)
   ├─→ o11y.rs, metrics.rs, utils/mount.rs

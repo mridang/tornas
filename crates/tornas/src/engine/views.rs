@@ -58,11 +58,9 @@ pub struct BudgetView {
 pub struct SessionView {
     pub download_bps: u64,
     pub upload_bps: u64,
-    /// Global limits in force right now (after the bandwidth schedule); null = unlimited.
+    /// Global limits in force right now; null = unlimited.
     pub download_limit: Option<u32>,
     pub upload_limit: Option<u32>,
-    /// Index into `[[bandwidth.schedule]]` of the window in force, if any.
-    pub schedule_window: Option<usize>,
     /// Downloads held back by `--max-active-downloads`.
     pub queued: usize,
     pub peers_live: u64,
@@ -223,7 +221,6 @@ impl Engine {
                 upload_bps: snap.upload_speed.as_bytes(),
                 download_limit: self.session.ratelimits.get_download_bps().map(|b| b.get()),
                 upload_limit: self.session.ratelimits.get_upload_bps().map(|b| b.get()),
-                schedule_window: *self.bandwidth_active.lock(),
                 queued: self.queued_count(),
                 peers_live: u64::from(snap.peers.live),
                 uptime_secs: self.started.elapsed().as_secs(),
@@ -257,7 +254,6 @@ impl Engine {
                 upload_bps: snap.upload_speed.as_bytes(),
                 download_limit: self.session.ratelimits.get_download_bps().map(|b| b.get()),
                 upload_limit: self.session.ratelimits.get_upload_bps().map(|b| b.get()),
-                schedule_window: *self.bandwidth_active.lock(),
                 queued: self.queued_count(),
                 peers_live: u64::from(snap.peers.live),
                 uptime_secs: self.started.elapsed().as_secs(),

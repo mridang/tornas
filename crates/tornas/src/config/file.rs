@@ -1,4 +1,4 @@
-//! The TOML config file: `[trackers]`, `[network]` and `[bandwidth]`. Everything
+//! The TOML config file: `[trackers]` and `[network]`. Everything
 //! here has a default, and flags and environment variables override it.
 
 use std::path::PathBuf;
@@ -15,7 +15,6 @@ use crate::trackers::TrackersConfig;
 pub struct FileConfig {
     pub trackers: TrackersConfig,
     pub network: NetworkConfig,
-    pub bandwidth: crate::schedule::BandwidthConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

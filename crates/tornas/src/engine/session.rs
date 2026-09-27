@@ -138,7 +138,6 @@ impl Engine {
             .context("starting torrent session")?;
 
         let pause0 = super::pause::load_pause(data_dir);
-        let file_config_bandwidth = file_config.bandwidth.clone();
         let engine = Arc::new(Self {
             session,
             library,
@@ -155,10 +154,7 @@ impl Engine {
             pause: parking_lot::Mutex::new(pause0),
             disk_missing: std::sync::atomic::AtomicBool::new(false),
             add_lock: tokio::sync::Mutex::new(()),
-            bandwidth: crate::schedule::compile(&file_config_bandwidth)?,
-            bandwidth_active: parking_lot::Mutex::new(None),
         });
-        engine.apply_bandwidth();
         *engine.weak.write() = Arc::downgrade(&engine);
         // The tracker list is fetched by the background refresh loop, whose first tick
         // fires immediately. Never block startup on it: a slow or offline source would

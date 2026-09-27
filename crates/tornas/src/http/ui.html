@@ -423,7 +423,7 @@ function renderTiles() {
   const s = S.session, b = S.budget, ms = S.movies;
   $("t-down").textContent = rate(s.download_bps);
   $("t-up").textContent = rate(s.upload_bps);
-  const cap = (v) => v ? " · limit " + rate(v) + (s.schedule_window != null ? " (schedule)" : "") : "";
+  const cap = (v) => v ? " · limit " + rate(v) : "";
   $("t-down-s").textContent = ms.filter((m) => m.download_bps > 0).length + " active" +
     (s.queued ? " · " + s.queued + " queued" : "") + cap(s.download_limit);
   $("t-up-s").textContent = (ms.some((m) => m.state === "seeding") ? "seeding" : "not seeding") + cap(s.upload_limit);

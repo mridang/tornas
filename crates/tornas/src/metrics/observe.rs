@@ -278,21 +278,6 @@ pub fn observe(engine: Arc<Engine>) {
         "Global upload limit in force; 0 = unlimited",
         Box::new(|d, o| o.observe(d.status.session.upload_limit.unwrap_or(0) as f64, &[])),
     );
-    g(
-        &mut kept,
-        "tornas_bandwidth_window",
-        "Index of the [[bandwidth.schedule]] window in force, or -1",
-        Box::new(|d, o| {
-            o.observe(
-                d.status
-                    .session
-                    .schedule_window
-                    .map(|w| w as f64)
-                    .unwrap_or(-1.0),
-                &[],
-            )
-        }),
-    );
     let (peer_limit, checks) = (opts.peer_limit, opts.concurrent_checks);
     g(
         &mut kept,

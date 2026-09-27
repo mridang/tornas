@@ -25,7 +25,6 @@ pub mod http;
 pub mod media_catalog;
 pub mod metrics;
 pub mod o11y;
-pub mod schedule;
 pub use service::systemd;
 pub mod server;
 pub mod tmdb;
