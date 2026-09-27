@@ -49,7 +49,7 @@ mime_guess = { version = "2", default-features = false }
 parking_lot = "0.12"
 ratatui = "0.30"
 crossterm = "0.29"
-rand = "0.9"
+rand = "0.10"
 gethostname = "1"
 url = "2"
 ipnet = "2"
