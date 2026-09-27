@@ -3985,6 +3985,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "service"
+version = "1.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "axum-server",
+ "futures",
+ "sd-notify",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4628,6 +4642,7 @@ dependencies = [
  "serde",
  "serde_ignored",
  "serde_json",
+ "service",
  "strsim",
  "tempfile",
  "tokio",

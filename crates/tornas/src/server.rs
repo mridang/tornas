@@ -9,12 +9,8 @@ use std::{net::IpAddr, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
-use crate::{
-    config::ServerOpts,
-    engine::Engine,
-    service::{Component, Service, systemd::Systemd},
-    utils,
-};
+use crate::{config::ServerOpts, engine::Engine, utils};
+use service::{Component, Service, systemd::Systemd};
 
 /// Start everything and run until a termination signal arrives. The runtime owns
 /// signal handling: SIGTERM/SIGINT shut down, SIGHUP reloads.
