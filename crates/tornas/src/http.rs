@@ -17,11 +17,20 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
+    extract::DefaultBodyLimit,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::get,
 };
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::{
+    compression::CompressionLayer,
+    cors::{Any, CorsLayer},
+    trace::TraceLayer,
+};
+
+/// The largest request body the API accepts. Generous for a base64 `.torrent`
+/// (which are kilobytes, rarely a megabyte), while still refusing a runaway upload.
+const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
 
 use crate::engine::Engine;
 
@@ -159,6 +168,11 @@ pub fn routes(engine: AppState) -> Router {
             "/api/movies/{imdb_id}",
             get(api_get).patch(api_patch).delete(api_delete),
         )
+        // Compress the dashboard, the JSON API and the /metrics text. The default
+        // predicate skips tiny bodies, already-compressed types and the SSE stream
+        // (/api/events), and the video routes are added elsewhere so media is never
+        // compressed.
+        .layer(CompressionLayer::new())
         .with_state(engine)
 }
 
@@ -179,16 +193,19 @@ pub fn shared(engine: AppState) -> impl FnOnce(Router) -> Router {
         let acl = engine.acl.clone();
         let token = middleware::ApiToken::new(engine.opts.api_token.clone());
         // Inside the source-address check (refused requests have their own counter)
-        // and after routing (so the route template is known): token, then timing,
-        // then CORS, then the private-network preflight, then the ACL outermost.
-        app.layer(axum::middleware::from_fn_with_state(token, require_token))
-        .layer(axum::middleware::from_fn(track_http))
-        .layer(cors)
-        .layer(axum::middleware::from_fn(allow_private_network))
-        .layer(axum::middleware::from_fn_with_state(
-            acl,
-            require_allowed_source,
-        ))
+        // and after routing (so the route template is known): the body-size cap, then
+        // token, then timing, then CORS, then the private-network preflight, then the
+        // ACL, with a tracing span wrapping everything so even refused requests appear.
+        app.layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+            .layer(axum::middleware::from_fn_with_state(token, require_token))
+            .layer(axum::middleware::from_fn(track_http))
+            .layer(cors)
+            .layer(axum::middleware::from_fn(allow_private_network))
+            .layer(axum::middleware::from_fn_with_state(
+                acl,
+                require_allowed_source,
+            ))
+            .layer(TraceLayer::new_for_http())
     }
 }
 
