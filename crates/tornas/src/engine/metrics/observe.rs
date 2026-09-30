@@ -82,20 +82,16 @@ impl Snapshot {
         let snap = e.session.stats_snapshot();
         let p = &snap.peers;
         let c = &snap.connections;
-        let connections = [("tcp", &c.tcp), ("utp", &c.utp), ("socks", &c.socks)]
-            .into_iter()
-            .flat_map(|(t, cf)| {
-                [("v4", &cf.v4), ("v6", &cf.v6)]
-                    .into_iter()
-                    .flat_map(move |(fam, st)| {
-                        [
-                            (t, fam, "attempt", st.attempts),
-                            (t, fam, "success", st.successes),
-                            (t, fam, "error", st.errors),
-                        ]
-                    })
-            })
-            .collect();
+        // Flatten the connection stats into one row per (transport, family, outcome),
+        // which is how `tornas_peer_connections_total` is labelled.
+        let mut connections = Vec::new();
+        for (transport, by_family) in [("tcp", &c.tcp), ("utp", &c.utp), ("socks", &c.socks)] {
+            for (family, stats) in [("v4", &by_family.v4), ("v6", &by_family.v6)] {
+                connections.push((transport, family, "attempt", stats.attempts));
+                connections.push((transport, family, "success", stats.successes));
+                connections.push((transport, family, "error", stats.errors));
+            }
+        }
 
         let mut schemes: std::collections::BTreeMap<String, u64> = Default::default();
         for t in e.trackers.current() {

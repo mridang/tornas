@@ -213,10 +213,7 @@ fn base_url(opts: &RouterOptions, headers: &HeaderMap) -> String {
 
 /// Only for segments that are not extras; extras are decoded after splitting.
 fn percent_decode(s: &str) -> String {
-    Extra::parse(&format!("x={s}"))
-        .get("x")
-        .unwrap_or_default()
-        .to_owned()
+    super::extra::decode(s)
 }
 
 #[cfg(test)]

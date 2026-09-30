@@ -61,8 +61,9 @@ impl Extra {
 }
 
 /// Percent-decoding, applied per key and per value once they are already split.
-/// `+` is left alone: this is a path segment, not a form body.
-fn decode(s: &str) -> String {
+/// `+` is left alone: this is a path segment, not a form body. Also used directly by
+/// the router to decode non-extra path segments.
+pub(crate) fn decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

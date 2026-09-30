@@ -56,13 +56,14 @@ impl Engine {
         let res = self.add_movie_inner(req).await;
         match &res {
             Ok(_) => crate::engine::metrics::add("ok"),
-            Err(e)
-                if format!("{e:#}").contains("evictable space")
-                    || format!("{e:#}").contains("larger than the whole budget") =>
-            {
-                crate::engine::metrics::add("refused")
+            Err(e) => {
+                // A movie that cannot fit within the disk budget is a refusal, not an
+                // internal error (matched on the eviction planner's message).
+                let msg = format!("{e:#}");
+                let refused = msg.contains("evictable space")
+                    || msg.contains("larger than the whole budget");
+                crate::engine::metrics::add(if refused { "refused" } else { "error" });
             }
-            Err(_) => crate::engine::metrics::add("error"),
         }
         res
     }
@@ -93,8 +94,8 @@ impl Engine {
             req.torrent_url.is_some(),
             req.torrent_base64.is_some(),
         ]
-        .iter()
-        .filter(|b| **b)
+        .into_iter()
+        .filter(|&present| present)
         .count();
         if sources != 1 {
             return Err(fault(

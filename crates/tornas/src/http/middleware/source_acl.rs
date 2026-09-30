@@ -67,6 +67,19 @@ fn parse(list: &[String], what: &str) -> anyhow::Result<Vec<IpNet>> {
     Ok(out)
 }
 
+/// Parse one `X-Forwarded-For` hop, accepting the three forms it can take: a bare
+/// address, `host:port`, or a bracketed `[v6]:port`.
+fn parse_hop(hop: &str) -> Option<IpAddr> {
+    if let Ok(ip) = hop.parse::<IpAddr>() {
+        return Some(ip);
+    }
+    if let Ok(addr) = hop.parse::<std::net::SocketAddr>() {
+        return Some(addr.ip());
+    }
+    let unbracketed = hop.trim_matches(|c| c == '[' || c == ']');
+    unbracketed.parse::<Ipv6Addr>().ok().map(IpAddr::V6)
+}
+
 /// An IPv4 client reaching a dual-stack listener arrives as `::ffff:a.b.c.d`;
 /// compare against the IPv4 form so IPv4 ranges match.
 fn unmap(ip: IpAddr) -> IpAddr {
@@ -113,19 +126,9 @@ impl Acl {
             return unmap(peer);
         };
         for hop in xff.rsplit(',') {
-            let hop = hop.trim().trim_matches('"');
-            // Strip a port if present, and brackets from [v6]:port forms.
-            let candidate = hop
-                .parse::<IpAddr>()
-                .ok()
-                .or_else(|| hop.parse::<std::net::SocketAddr>().ok().map(|s| s.ip()))
-                .or_else(|| {
-                    hop.trim_matches(|c| c == '[' || c == ']')
-                        .parse::<Ipv6Addr>()
-                        .ok()
-                        .map(IpAddr::V6)
-                });
-            let Some(ip) = candidate else { continue };
+            let Some(ip) = parse_hop(hop.trim().trim_matches('"')) else {
+                continue;
+            };
             if !self.is_proxy(ip) {
                 return unmap(ip);
             }

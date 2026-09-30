@@ -15,22 +15,22 @@ use tracing::{info, warn};
 
 use crate::utils::now_secs;
 
-fn d_true() -> bool {
+fn default_true() -> bool {
     true
 }
-fn d_refresh() -> Duration {
+fn default_refresh() -> Duration {
     Duration::from_secs(6 * 3600)
 }
-fn d_timeout() -> Duration {
+fn default_timeout() -> Duration {
     Duration::from_secs(20)
 }
-fn d_stale() -> Duration {
+fn default_stale() -> Duration {
     Duration::from_secs(7 * 86_400)
 }
-fn d_schemes() -> Vec<String> {
+fn default_schemes() -> Vec<String> {
     vec!["https".into(), "udp".into()]
 }
-fn d_max() -> usize {
+fn default_max() -> usize {
     60
 }
 
@@ -39,7 +39,7 @@ fn d_max() -> usize {
 pub struct Source {
     pub name: String,
     pub url: String,
-    #[serde(default = "d_true")]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     /// Per-source scheme override; defaults to the global list.
     #[serde(default)]
@@ -61,28 +61,28 @@ pub struct StaticLists {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TrackersConfig {
-    #[serde(default = "d_true")]
+    #[serde(default = "default_true")]
     pub enabled: bool,
     /// How often to re-fetch the sources.
-    #[serde(default = "d_refresh", with = "humantime_serde")]
+    #[serde(default = "default_refresh", with = "humantime_serde")]
     pub refresh: Duration,
     /// Per-source HTTP timeout.
-    #[serde(default = "d_timeout", with = "humantime_serde")]
+    #[serde(default = "default_timeout", with = "humantime_serde")]
     pub fetch_timeout: Duration,
     /// Keep serving the cached list this long after the last successful fetch.
-    #[serde(default = "d_stale", with = "humantime_serde")]
+    #[serde(default = "default_stale", with = "humantime_serde")]
     pub stale_after: Duration,
     /// Allowed URL schemes. Default: https and udp only.
-    #[serde(default = "d_schemes")]
+    #[serde(default = "default_schemes")]
     pub schemes: Vec<String>,
     /// Maximum trackers handed to a torrent, in source order.
-    #[serde(default = "d_max")]
+    #[serde(default = "default_max")]
     pub max: usize,
     /// Drop trackers whose host is a bare IP address.
     #[serde(default)]
     pub reject_ip_hosts: bool,
     /// Re-announce torrents that are still downloading when the list changes.
-    #[serde(default = "d_true")]
+    #[serde(default = "default_true")]
     pub reannounce_active: bool,
     #[serde(default = "default_sources")]
     pub sources: Vec<Source>,
@@ -422,7 +422,10 @@ impl TrackerFeed {
             let mut st = self.state.write();
             let changed = st.trackers != trackers;
             st.sources = statuses;
-            if any_ok || lists.is_empty() && st.trackers.is_empty() {
+            // Commit if any source succeeded, or on a first run with no sources and
+            // nothing cached (so an empty config still records an empty result).
+            let first_run_without_sources = lists.is_empty() && st.trackers.is_empty();
+            if any_ok || first_run_without_sources {
                 st.trackers = trackers;
                 st.updated_at = Some(now);
                 st.rejected = rejected;

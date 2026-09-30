@@ -286,21 +286,25 @@ pub(super) async fn api_patch(
             FIELDS.join(", ")
         )));
     }
+    // A positive byte-rate that fits in u32, or a client error. Returns Ok(None)
+    // only for an explicit JSON null (meaning "no limit").
+    let positive = |value: Option<u64>, err: String| -> Result<Option<u32>, ApiError> {
+        match value.filter(|v| *v > 0).and_then(|v| u32::try_from(v).ok()) {
+            Some(v) => Ok(Some(v)),
+            None => Err(invalid(err)),
+        }
+    };
     let rate = |key: &str| -> Result<Option<u32>, ApiError> {
         match &patch[key] {
             serde_json::Value::Null => Ok(None),
-            serde_json::Value::Number(n) => n
-                .as_u64()
-                .filter(|v| *v > 0)
-                .and_then(|v| u32::try_from(v).ok())
-                .map(Some)
-                .ok_or_else(|| invalid(format!("{key} must be between 1 and 4294967295 bytes/s"))),
-            serde_json::Value::String(s) => crate::utils::parse_size(s)
-                .ok()
-                .filter(|v| *v > 0)
-                .and_then(|v| u32::try_from(v).ok())
-                .map(Some)
-                .ok_or_else(|| invalid(format!("{key}: {s:?} is not a size like \"2M\""))),
+            serde_json::Value::Number(n) => positive(
+                n.as_u64(),
+                format!("{key} must be between 1 and 4294967295 bytes/s"),
+            ),
+            serde_json::Value::String(s) => positive(
+                crate::utils::parse_size(s).ok(),
+                format!("{key}: {s:?} is not a size like \"2M\""),
+            ),
             _ => Err(invalid(format!("{key} must be a number, a size or null"))),
         }
     };
