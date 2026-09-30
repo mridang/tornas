@@ -15,9 +15,12 @@ use service::{Component, Service, systemd::Systemd};
 /// Start everything and run until a termination signal arrives. The runtime owns
 /// signal handling: SIGTERM/SIGINT shut down, SIGHUP reloads.
 pub async fn run_server(opts: ServerOpts) -> anyhow::Result<()> {
-    crate::metrics::install();
+    // Seed each subsystem's counters at zero so the first scrape carries the full
+    // set. The HTTP middleware seeds its own from `http::shared`.
+    crate::engine::metrics::install();
+    crate::adapters::install();
     let engine = Engine::start(opts.clone()).await?;
-    crate::metrics::observe(engine.clone());
+    crate::engine::metrics::observe(engine.clone());
 
     let mut svc = Service::new("tornas")
         .http(opts.http_listen)

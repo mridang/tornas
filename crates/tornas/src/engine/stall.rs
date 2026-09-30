@@ -61,7 +61,7 @@ impl Engine {
                 ),
             )?;
             self.evict(&hash).await?;
-            crate::metrics::stalled_eviction();
+            crate::engine::metrics::stalled_eviction();
             out.push(hash);
         }
         Ok(out)

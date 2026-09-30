@@ -9,6 +9,7 @@ pub mod disk;
 pub mod eviction;
 pub mod fault;
 pub mod limits;
+pub mod metrics;
 pub mod pause;
 pub mod queue;
 pub mod session;

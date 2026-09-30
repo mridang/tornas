@@ -49,7 +49,7 @@ impl Engine {
                 Ok(()) => {
                     let name = handle.name().unwrap_or_default();
                     info!("download complete, paused seeding: {name}");
-                    crate::metrics::seeding_paused();
+                    crate::engine::metrics::seeding_paused();
                     let _ = engine
                         .library
                         .store()

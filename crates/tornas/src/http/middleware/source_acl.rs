@@ -8,6 +8,7 @@
 //! axum layer that applies it to each request.
 
 use std::net::{IpAddr, Ipv6Addr};
+use std::sync::OnceLock;
 
 use anyhow::Context;
 use axum::{
@@ -16,8 +17,24 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use ipnet::IpNet;
+use opentelemetry::metrics::Counter;
 
-use crate::http::ApiError;
+use crate::{http::ApiError, metrics::meter};
+
+/// Requests refused for an out-of-range source, counted where they are refused.
+fn refused() -> &'static Counter<u64> {
+    static C: OnceLock<Counter<u64>> = OnceLock::new();
+    C.get_or_init(|| {
+        meter()
+            .u64_counter("tornas_forbidden_source_total")
+            .with_description("Requests refused because the source address is not allowed")
+            .build()
+    })
+}
+
+pub(super) fn seed() {
+    refused().add(0, &[]);
+}
 
 /// Loopback, link-local, RFC1918, unique-local, and Tailscale's CGNAT range.
 pub const DEFAULT_ALLOW: &str = "127.0.0.0/8,::1/128,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fe80::/10,fc00::/7,100.64.0.0/10";
@@ -143,7 +160,7 @@ pub(in crate::http) async fn require_allowed_source(
         return next.run(req).await;
     }
     tracing::debug!(%client, path = %req.uri().path(), "refused: source address not allowed");
-    crate::metrics::forbidden_source();
+    refused().add(1, &[]);
     ApiError::new(
         StatusCode::FORBIDDEN,
         "forbidden",

@@ -1,170 +1,25 @@
-//! Metrics, as OpenTelemetry instruments.
+//! The shared metrics infrastructure: the `tornas` meter every subsystem records
+//! against, and the `/metrics` scrape.
 //!
-//! Event counters are synchronous instruments that accumulate between scrapes
-//! (defined here). Everything describing current state (budget, library,
-//! per-torrent, session, DHT, trackers, process) is an **observable** instrument
-//! whose callback reads typed engine data at collection time; those live in
-//! [`observe`], registered once the engine has started. The HTTP request metrics
-//! belong to their axum layer, in `http::middleware::metrics`.
+//! There is no central instrument registry any more. Each subsystem owns the metrics
+//! it records, next to the code that records them: the engine's event counters and
+//! observable gauges in [`engine::metrics`](crate::engine::metrics), the stream
+//! counters in [`adapters`](crate::adapters), and the HTTP request timing and
+//! refusal counters in `http::middleware`. They all build from [`meter`], so they
+//! register into the one provider whose Prometheus reader this module scrapes.
 //!
-//! The meter provider and its Prometheus reader live in [`o11y`](crate::o11y);
-//! `/metrics` encodes that reader's registry, and when an OTLP endpoint is
-//! configured the same instruments are pushed to the collector.
+//! The meter provider and its Prometheus reader live in [`o11y`](crate::o11y); when
+//! an OTLP endpoint is configured the same instruments are also pushed to a collector.
 
 use std::sync::OnceLock;
 
 use anyhow::Context;
-use opentelemetry::{
-    KeyValue,
-    metrics::{Counter, Meter},
-};
+use opentelemetry::metrics::Meter;
 
-mod observe;
-pub use observe::observe;
-
-fn meter() -> Meter {
+/// The one meter every subsystem records against; its name is the single source of
+/// truth for instrument ownership.
+pub fn meter() -> Meter {
     opentelemetry::global::meter("tornas")
-}
-
-// ---- synchronous instruments ----------------------------------------------
-
-struct Instruments {
-    adds: Counter<u64>,
-    evictions: Counter<u64>,
-    evicted_bytes: Counter<u64>,
-    tmdb_errors: Counter<u64>,
-    streams: Counter<u64>,
-    stream_bytes: Counter<u64>,
-    removals: Counter<u64>,
-    seeding_paused: Counter<u64>,
-    stalled_evictions: Counter<u64>,
-    unauthorized: Counter<u64>,
-    forbidden_source: Counter<u64>,
-    pauses: Counter<u64>,
-    resumes: Counter<u64>,
-}
-
-static INSTRUMENTS: OnceLock<Instruments> = OnceLock::new();
-
-fn instruments() -> &'static Instruments {
-    INSTRUMENTS.get_or_init(|| {
-        let m = meter();
-        let counter = |name: &'static str, help: &'static str| {
-            m.u64_counter(name).with_description(help).build()
-        };
-        Instruments {
-            adds: counter(
-                "tornas_adds_total",
-                "Movies added, by result (ok, refused, error)",
-            ),
-            evictions: counter(
-                "tornas_evictions_total",
-                "Movies evicted to stay under the disk budget",
-            ),
-            evicted_bytes: counter("tornas_evicted_bytes_total", "Bytes freed by eviction"),
-            tmdb_errors: counter("tornas_tmdb_errors_total", "Failed TMDB lookups"),
-            streams: counter(
-                "tornas_streams_total",
-                "Video stream requests, by kind (range or full)",
-            ),
-            stream_bytes: counter(
-                "tornas_stream_bytes_total",
-                "Bytes requested by video stream clients",
-            ),
-            removals: counter("tornas_removals_total", "Movies removed through the API"),
-            seeding_paused: counter(
-                "tornas_seeding_paused_total",
-                "Downloads that finished and were paused",
-            ),
-            stalled_evictions: counter(
-                "tornas_stalled_evictions_total",
-                "Downloads evicted after making no progress",
-            ),
-            unauthorized: counter(
-                "tornas_unauthorized_total",
-                "Requests refused for a missing or wrong API token",
-            ),
-            forbidden_source: counter(
-                "tornas_forbidden_source_total",
-                "Requests refused because the source address is not allowed",
-            ),
-            pauses: counter("tornas_pauses_total", "Times everything was paused"),
-            resumes: counter(
-                "tornas_resumes_total",
-                "Times a pause ended, by trigger (manual or auto)",
-            ),
-        }
-    })
-}
-
-/// Build the instruments and seed the labelled ones at zero, so the first scrape
-/// already carries the full set of event counters. Call once, after the meter
-/// provider is installed.
-pub fn install() {
-    let i = instruments();
-    for r in ["ok", "refused", "error"] {
-        i.adds.add(0, &[KeyValue::new("result", r)]);
-    }
-    for k in ["range", "full"] {
-        i.streams.add(0, &[KeyValue::new("kind", k)]);
-    }
-    for t in ["manual", "auto"] {
-        i.resumes.add(0, &[KeyValue::new("trigger", t)]);
-    }
-    for c in [
-        &i.evictions,
-        &i.evicted_bytes,
-        &i.tmdb_errors,
-        &i.stream_bytes,
-        &i.removals,
-        &i.seeding_paused,
-        &i.stalled_evictions,
-        &i.unauthorized,
-        &i.forbidden_source,
-        &i.pauses,
-    ] {
-        c.add(0, &[]);
-    }
-}
-
-pub fn add(result: &'static str) {
-    instruments()
-        .adds
-        .add(1, &[KeyValue::new("result", result)]);
-}
-pub fn eviction(bytes: u64) {
-    instruments().evictions.add(1, &[]);
-    instruments().evicted_bytes.add(bytes, &[]);
-}
-pub fn tmdb_error() {
-    instruments().tmdb_errors.add(1, &[]);
-}
-pub fn stream(kind: &'static str, bytes: u64) {
-    instruments().streams.add(1, &[KeyValue::new("kind", kind)]);
-    instruments().stream_bytes.add(bytes, &[]);
-}
-pub fn seeding_paused() {
-    instruments().seeding_paused.add(1, &[]);
-}
-pub fn stalled_eviction() {
-    instruments().stalled_evictions.add(1, &[]);
-}
-pub fn forbidden_source() {
-    instruments().forbidden_source.add(1, &[]);
-}
-pub fn unauthorized() {
-    instruments().unauthorized.add(1, &[]);
-}
-pub fn paused() {
-    instruments().pauses.add(1, &[]);
-}
-pub fn resumed(trigger: &'static str) {
-    instruments()
-        .resumes
-        .add(1, &[KeyValue::new("trigger", trigger)]);
-}
-pub fn removal() {
-    instruments().removals.add(1, &[]);
 }
 
 // ---- the /metrics scrape ---------------------------------------------------

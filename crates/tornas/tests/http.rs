@@ -329,7 +329,7 @@ async fn api_stremio_and_video() {
 
     // Metrics: parseable families, each declared once. Register the observable
     // instruments against this test's engine first (main does this after start).
-    tornas::metrics::observe(s.engine.clone());
+    tornas::engine::metrics::observe(s.engine.clone());
     let body = s
         .http
         .get(s.url("/metrics"))

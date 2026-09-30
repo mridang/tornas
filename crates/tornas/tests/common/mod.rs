@@ -177,7 +177,8 @@ pub fn init_telemetry() {
     ONCE.call_once(|| {
         let telemetry = tornas::o11y::init_providers(None, "tornas").expect("telemetry init");
         tornas::metrics::set_registry(telemetry.registry());
-        tornas::metrics::install();
+        tornas::engine::metrics::install();
+        tornas::adapters::install();
         // Leak it: the providers must outlive every test in the process.
         std::mem::forget(telemetry);
     });

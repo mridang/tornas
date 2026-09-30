@@ -120,7 +120,7 @@ async fn video(
         } else {
             "full"
         };
-        crate::metrics::stream(kind, served);
+        crate::adapters::stream(kind, served);
     }
     Ok(response)
 }

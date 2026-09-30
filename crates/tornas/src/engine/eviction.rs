@@ -43,7 +43,7 @@ impl Engine {
         if let Some(r) = &row {
             self.library.store().delete_movie(&r.imdb_id)?;
         }
-        crate::metrics::eviction(row.as_ref().map(|r| r.size_bytes).unwrap_or(0));
+        crate::engine::metrics::eviction(row.as_ref().map(|r| r.size_bytes).unwrap_or(0));
         let msg = format!("evicted {title} ({info_hash})");
         info!("{msg}");
         self.library.store().add_event("evict", &msg)?;

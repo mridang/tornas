@@ -93,7 +93,7 @@ impl Engine {
         };
         warn!("{msg}");
         let _ = self.library.store().add_event("pause", &msg);
-        crate::metrics::paused();
+        crate::engine::metrics::paused();
         Ok(self.pause_view())
     }
 
@@ -117,7 +117,7 @@ impl Engine {
         let msg = format!("resumed ({trigger}): {n} torrents restarted");
         info!("{msg}");
         self.library.store().add_event("resume", &msg)?;
-        crate::metrics::resumed(trigger);
+        crate::engine::metrics::resumed(trigger);
         Ok(n)
     }
 

@@ -39,7 +39,7 @@ impl Engine {
             reason: PauseReason::DiskMissing,
         });
         let n = self.apply_pause().await;
-        crate::metrics::paused();
+        crate::engine::metrics::paused();
         warn!(
             "the data disk at {} is not mounted: paused everything ({n} torrents) until it is back",
             self.opts.data_dir.display()

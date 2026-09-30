@@ -18,8 +18,8 @@ use opentelemetry::{
     metrics::{AsyncInstrument, ObservableCounter, ObservableGauge},
 };
 
-use super::meter;
 use crate::engine::{Engine, StatusView, TorrentFacts};
+use crate::metrics::meter;
 
 // ---- observable state ------------------------------------------------------
 

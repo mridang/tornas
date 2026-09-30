@@ -168,6 +168,7 @@ pub fn routes(engine: AppState) -> Router {
 /// whole router is the same as protecting only the endpoints that need it.
 pub fn shared(engine: AppState) -> impl FnOnce(Router) -> Router {
     move |app| {
+        middleware::install();
         let cors = CorsLayer::new()
             .allow_origin(Any)
             .allow_methods(Any)

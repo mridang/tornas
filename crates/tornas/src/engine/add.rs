@@ -47,7 +47,7 @@ impl Engine {
         self.library
             .store()
             .add_event("remove", &format!("removed {imdb_id}"))?;
-        crate::metrics::removal();
+        crate::engine::metrics::removal();
         Ok(true)
     }
 
@@ -55,14 +55,14 @@ impl Engine {
         let _guard = self.add_lock.lock().await;
         let res = self.add_movie_inner(req).await;
         match &res {
-            Ok(_) => crate::metrics::add("ok"),
+            Ok(_) => crate::engine::metrics::add("ok"),
             Err(e)
                 if format!("{e:#}").contains("evictable space")
                     || format!("{e:#}").contains("larger than the whole budget") =>
             {
-                crate::metrics::add("refused")
+                crate::engine::metrics::add("refused")
             }
-            Err(_) => crate::metrics::add("error"),
+            Err(_) => crate::engine::metrics::add("error"),
         }
         res
     }
@@ -123,7 +123,7 @@ impl Engine {
                 let m = t
                     .find_by_imdb(&imdb_id)
                     .await
-                    .inspect_err(|_| crate::metrics::tmdb_error())?;
+                    .inspect_err(|_| crate::engine::metrics::tmdb_error())?;
                 (
                     Movie {
                         imdb_id: imdb_id.clone(),

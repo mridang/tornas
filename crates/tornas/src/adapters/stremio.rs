@@ -120,7 +120,7 @@ fn count_served(response: &Response, fallback_len: u64) {
         } else {
             "full"
         };
-        crate::metrics::stream(kind, served);
+        crate::adapters::stream(kind, served);
     }
 }
 

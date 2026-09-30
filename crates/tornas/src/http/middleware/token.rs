@@ -2,15 +2,31 @@
 //! `Authorization: Bearer <token>` (or `X-Api-Token`). Everything Stremio and DLNA
 //! players use stays open.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use axum::{
     extract::State,
     http::{StatusCode, header},
     response::{IntoResponse, Response},
 };
+use opentelemetry::metrics::Counter;
 
-use crate::http::ApiError;
+use crate::{http::ApiError, metrics::meter};
+
+/// Refused requests, counted where they are refused. Seeded at zero by [`seed`].
+fn refused() -> &'static Counter<u64> {
+    static C: OnceLock<Counter<u64>> = OnceLock::new();
+    C.get_or_init(|| {
+        meter()
+            .u64_counter("tornas_unauthorized_total")
+            .with_description("Requests refused for a missing or wrong API token")
+            .build()
+    })
+}
+
+pub(super) fn seed() {
+    refused().add(0, &[]);
+}
 
 /// The gate's only input: the configured token, or `None` when auth is off. Built
 /// from config and handed to the layer as state, so the gate needs nothing else.
@@ -53,7 +69,7 @@ pub(in crate::http) async fn require_token(
     if presented == Some(token) {
         next.run(req).await
     } else {
-        crate::metrics::unauthorized();
+        refused().add(1, &[]);
         ApiError::new(
             StatusCode::UNAUTHORIZED,
             "unauthorized",
