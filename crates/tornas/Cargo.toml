@@ -53,7 +53,7 @@ gethostname = "1"
 url = "2"
 ipnet = "2"
 serde_ignored = "0.1"
-toml = "0.9"
+toml = "1.1"
 base64 = "0.22"
 humantime-serde = "1"
 mdns = { path = "../mdns" }
