@@ -34,7 +34,7 @@ src/
   adapters/          implements the protocol crates' traits for this app's types
 
   o11y.rs            observability: OTel providers + the tracing subscriber (stdout + OTLP)
-  metrics.rs         the instruments; /metrics scrape and OTLP push
+  metrics.rs         the shared meter + the /metrics scrape (instruments live with their code)
   trackers.rs        public tracker feed
   fixtures.rs        test fixture generator and seeder
 ```
@@ -92,12 +92,17 @@ instruments that reference them. A Prometheus meter provider is always installed
 `/metrics` works; when `TORNAS_OTLP_ENDPOINT` is set, traces, logs and metrics are
 also pushed to a collector over OTLP/gRPC.
 
-`metrics.rs` holds the instruments. Event counters and the HTTP histogram are
-synchronous; everything describing current state is an **observable** instrument
-whose callback reads typed engine data at collection time, so there is no
-hand-written text exposition. `o11y.rs` also builds the `tracing` subscriber: a
-console layer to stdout (systemd/journald or Docker capture it and own retention),
-plus OTLP log and span layers when export is on.
+`metrics.rs` holds only the shared `tornas` meter and the `/metrics` scrape. The
+instruments themselves live with the code that records them — the engine's event
+counters and observable gauges in `engine/metrics.rs`, the stream counters in
+`adapters`, and the HTTP request timing and refusal counters in `http/middleware`.
+Each builds from the same meter, so all register into the one provider the scrape
+gathers. Event counters and the HTTP histogram are synchronous; everything
+describing current state is an **observable** instrument whose callback reads typed
+engine data at collection time, so there is no hand-written text exposition.
+`o11y.rs` also builds the `tracing` subscriber: a console layer to stdout
+(systemd/journald or Docker capture it and own retention), plus OTLP log and span
+layers when export is on.
 
 ## Why the engine is one module with many files
 
