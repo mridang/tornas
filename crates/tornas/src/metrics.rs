@@ -1,21 +1,22 @@
 //! Metrics, as OpenTelemetry instruments.
 //!
-//! Event counters and the HTTP histogram are synchronous instruments that
-//! accumulate between scrapes (defined here). Everything describing current state
-//! (budget, library, per-torrent, session, DHT, trackers, process) is an
-//! **observable** instrument whose callback reads typed engine data at collection
-//! time; those live in [`observe`], registered once the engine has started.
+//! Event counters are synchronous instruments that accumulate between scrapes
+//! (defined here). Everything describing current state (budget, library,
+//! per-torrent, session, DHT, trackers, process) is an **observable** instrument
+//! whose callback reads typed engine data at collection time; those live in
+//! [`observe`], registered once the engine has started. The HTTP request metrics
+//! belong to their axum layer, in `http::middleware::metrics`.
 //!
 //! The meter provider and its Prometheus reader live in [`o11y`](crate::o11y);
 //! `/metrics` encodes that reader's registry, and when an OTLP endpoint is
 //! configured the same instruments are pushed to the collector.
 
-use std::{sync::OnceLock, time::Instant};
+use std::sync::OnceLock;
 
 use anyhow::Context;
 use opentelemetry::{
     KeyValue,
-    metrics::{Counter, Histogram, Meter},
+    metrics::{Counter, Meter},
 };
 
 mod observe;
@@ -41,8 +42,6 @@ struct Instruments {
     forbidden_source: Counter<u64>,
     pauses: Counter<u64>,
     resumes: Counter<u64>,
-    http_requests: Counter<u64>,
-    http_duration: Histogram<f64>,
 }
 
 static INSTRUMENTS: OnceLock<Instruments> = OnceLock::new();
@@ -94,17 +93,6 @@ fn instruments() -> &'static Instruments {
                 "tornas_resumes_total",
                 "Times a pause ended, by trigger (manual or auto)",
             ),
-            http_requests: counter(
-                "tornas_http_requests_total",
-                "HTTP requests served, by route template, method and status",
-            ),
-            http_duration: m
-                .f64_histogram("tornas_http_request_duration_seconds")
-                .with_description(
-                    "Time until response headers, by route template. For video this is time to \
-                     first byte, not the whole stream.",
-                )
-                .build(),
         }
     })
 }
@@ -177,46 +165,6 @@ pub fn resumed(trigger: &'static str) {
 }
 pub fn removal() {
     instruments().removals.add(1, &[]);
-}
-
-/// Middleware: count requests and time them by route *template* (never the raw
-/// path, which would be unbounded).
-pub async fn track_http(
-    req: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    let route = req
-        .extensions()
-        .get::<axum::extract::MatchedPath>()
-        .map(|m| m.as_str().to_owned())
-        .unwrap_or_else(|| "unmatched".to_owned());
-    let method: &'static str = match req.method().as_str() {
-        "GET" => "GET",
-        "HEAD" => "HEAD",
-        "POST" => "POST",
-        "PUT" => "PUT",
-        "PATCH" => "PATCH",
-        "DELETE" => "DELETE",
-        "OPTIONS" => "OPTIONS",
-        _ => "OTHER",
-    };
-    let start = Instant::now();
-    let resp = next.run(req).await;
-    let status = resp.status().as_u16().to_string();
-    let i = instruments();
-    i.http_requests.add(
-        1,
-        &[
-            KeyValue::new("route", route.clone()),
-            KeyValue::new("method", method),
-            KeyValue::new("status", status),
-        ],
-    );
-    i.http_duration.record(
-        start.elapsed().as_secs_f64(),
-        &[KeyValue::new("route", route)],
-    );
-    resp
 }
 
 // ---- the /metrics scrape ---------------------------------------------------

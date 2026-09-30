@@ -31,7 +31,7 @@ use api::{
     api_trackers, api_trackers_refresh, healthz, openapi, prometheus,
 };
 use dashboard::index;
-use middleware::{allow_private_network, require_allowed_source, require_token};
+use middleware::{allow_private_network, require_allowed_source, require_token, track_http};
 
 pub type AppState = Arc<Engine>;
 
@@ -181,7 +181,7 @@ pub fn shared(engine: AppState) -> impl FnOnce(Router) -> Router {
         // and after routing (so the route template is known): token, then timing,
         // then CORS, then the private-network preflight, then the ACL outermost.
         app.layer(axum::middleware::from_fn_with_state(token, require_token))
-        .layer(axum::middleware::from_fn(crate::metrics::track_http))
+        .layer(axum::middleware::from_fn(track_http))
         .layer(cors)
         .layer(axum::middleware::from_fn(allow_private_network))
         .layer(axum::middleware::from_fn_with_state(
