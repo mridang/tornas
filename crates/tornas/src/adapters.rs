@@ -53,3 +53,29 @@ pub fn stream(kind: &'static str, bytes: u64) {
     i.streams.add(1, &[KeyValue::new("kind", kind)]);
     i.stream_bytes.add(bytes, &[]);
 }
+
+/// A layer for the video routes: record the bytes served once the response is known.
+/// Scoped to `/video`, so it never counts the JSON endpoints. Kind and size come from
+/// the status and `Content-Length` that `axum-range` set, so the handlers stay lean.
+pub async fn track_stream(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{StatusCode, header::CONTENT_LENGTH};
+    let resp = next.run(req).await;
+    let kind = match resp.status() {
+        StatusCode::PARTIAL_CONTENT => Some("range"),
+        StatusCode::OK => Some("full"),
+        _ => None,
+    };
+    if let Some(kind) = kind {
+        let served = resp
+            .headers()
+            .get(CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        stream(kind, served);
+    }
+    resp
+}

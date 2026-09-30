@@ -10,7 +10,7 @@ use anyhow::Context;
 use axum::{
     Router,
     extract::{Path, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, header},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -61,11 +61,13 @@ pub fn router(engine: AppState) -> Router {
         },
     );
     // The bytes Stremio players fetch. This is the URL `stream_for` hands out
-    // (`MediaEntry::video_path`), so keep the two in step.
+    // (`MediaEntry::video_path`), so keep the two in step. The stream-metrics layer is
+    // scoped to these routes, so it never counts the addon's JSON endpoints.
     addon_router.merge(
         Router::new()
             .route("/video/{imdb_id}/{filename}", get(video))
             .route("/video/{imdb_id}", get(video))
+            .route_layer(axum::middleware::from_fn(crate::adapters::track_stream))
             .with_state(engine),
     )
 }
@@ -98,30 +100,8 @@ async fn video(
 
     debug!(imdb = p.imdb_id, ?range, "stremio video request");
 
-    let response = (out, Ranged::new(range, body)).into_response();
-    count_served(&response, len);
-    Ok(response)
-}
-
-/// Count what was actually served, by the status `axum-range` chose.
-fn count_served(response: &Response, fallback_len: u64) {
-    if matches!(
-        response.status(),
-        StatusCode::OK | StatusCode::PARTIAL_CONTENT
-    ) {
-        let served = response
-            .headers()
-            .get(header::CONTENT_LENGTH)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(fallback_len);
-        let kind = if response.status() == StatusCode::PARTIAL_CONTENT {
-            "range"
-        } else {
-            "full"
-        };
-        crate::adapters::stream(kind, served);
-    }
+    // Byte counting is done by the `track_stream` layer on this route.
+    Ok((out, Ranged::new(range, body)).into_response())
 }
 
 /// Assemble the addon. The manifest follows from the handlers registered here.

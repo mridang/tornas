@@ -10,7 +10,7 @@ use anyhow::Context;
 use axum::{
     Router,
     extract::{Path, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, header},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -56,6 +56,7 @@ pub fn video_router(engine: AppState) -> Router {
     Router::new()
         .route("/dlna/video/{imdb_id}/{filename}", get(video))
         .route("/dlna/video/{imdb_id}", get(video))
+        .route_layer(axum::middleware::from_fn(crate::adapters::track_stream))
         .with_state(engine)
 }
 
@@ -104,23 +105,6 @@ async fn video(
 
     debug!(imdb = p.imdb_id, ?range, "dlna video request");
 
-    let response = (out, Ranged::new(range, body)).into_response();
-    if matches!(
-        response.status(),
-        StatusCode::OK | StatusCode::PARTIAL_CONTENT
-    ) {
-        let served = response
-            .headers()
-            .get(header::CONTENT_LENGTH)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(len);
-        let kind = if response.status() == StatusCode::PARTIAL_CONTENT {
-            "range"
-        } else {
-            "full"
-        };
-        crate::adapters::stream(kind, served);
-    }
-    Ok(response)
+    // Byte counting is done by the `track_stream` layer on this route.
+    Ok((out, Ranged::new(range, body)).into_response())
 }
