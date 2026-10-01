@@ -2,11 +2,13 @@
 //! dashboard and the metrics endpoint. Nothing here changes anything.
 
 use std::net::SocketAddr;
+use std::pin::Pin;
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    media_catalog::{Event, Movie, TorrentRow, eviction::Candidate},
+    media_catalog::{Event, MediaStream, Movie, Streamer, TorrentRow, eviction::Candidate},
     utils::{human_bytes, now_secs},
 };
 
@@ -411,5 +413,25 @@ impl Engine {
             );
         }
         out
+    }
+}
+
+impl Streamer for Engine {
+    /// Open a movie's main video file as a plain seekable reader, hiding the torrent
+    /// handle so librqbit stays inside the engine.
+    fn open(
+        &self,
+        id: String,
+    ) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<MediaStream>> + Send + '_>> {
+        Box::pin(async move {
+            let (handle, file_idx, file_name) = self.stream_target(&id)?;
+            let stream = handle.stream(file_idx).await.context("opening stream")?;
+            let len = stream.len();
+            Ok(MediaStream {
+                reader: Box::new(stream),
+                len,
+                file_name,
+            })
+        })
     }
 }

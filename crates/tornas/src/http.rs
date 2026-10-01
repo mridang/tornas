@@ -216,7 +216,16 @@ pub fn router(engine: AppState, upnp: Option<Router>) -> Router {
     // Each playback protocol brings its own routes, including its own `/video` byte
     // route: Stremio at `/video/...`, DLNA at `/dlna/video/...`.
     let mut app = routes(engine.clone())
-        .merge(crate::adapters::stremio::router(engine.clone()))
+        .merge(crate::adapters::stremio::router(
+            engine.library.clone(),
+            engine.clone(),
+            engine
+                .opts
+                .addon_name
+                .clone()
+                .unwrap_or_else(|| "Tornas".to_owned()),
+            engine.opts.public_url.clone(),
+        ))
         .merge(crate::adapters::dlna::video_router(engine.clone()));
     if let Some(u) = upnp {
         app = app.merge(Router::new().nest("/upnp", u));

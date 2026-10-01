@@ -6,7 +6,6 @@
 
 use std::sync::Arc;
 
-use anyhow::Context;
 use axum::{
     Router,
     extract::{Path, State},
@@ -20,8 +19,8 @@ use serde::Deserialize;
 use tracing::debug;
 
 use crate::{
-    http::{ApiError, AppState},
-    media_catalog::Library,
+    http::ApiError,
+    media_catalog::{Library, Streamer},
 };
 use dlna::{Browsable, MediaItem};
 
@@ -38,9 +37,8 @@ impl Browsable for DlnaLibrary {
             .entries()
             .into_iter()
             .map(|e| MediaItem {
-                // DLNA has its own byte route; `video_path` gives `/video/...`, so
-                // prefix it to reach this protocol's `/dlna/video/...`.
-                path: format!("/dlna{}", e.video_path()),
+                // This protocol's own byte route; each adapter builds its own URL.
+                path: e.video_path("/dlna/video"),
                 title: e.display_title(),
                 size_bytes: e.file_size,
                 mime: mime_guess::from_path(&e.file_name).first(),
@@ -52,12 +50,12 @@ impl Browsable for DlnaLibrary {
 
 /// This protocol's own byte route, ready to merge at the root. TVs fetch bytes from
 /// `/dlna/video/...` — the URL the browse tree hands out in `items()`.
-pub fn video_router(engine: AppState) -> Router {
+pub fn video_router(streamer: Arc<dyn Streamer>) -> Router {
     Router::new()
         .route("/dlna/video/{imdb_id}/{filename}", get(video))
         .route("/dlna/video/{imdb_id}", get(video))
         .route_layer(axum::middleware::from_fn(crate::adapters::track_stream))
-        .with_state(engine)
+        .with_state(streamer)
 }
 
 /// The path parameters of `/dlna/video/{imdb_id}/{filename}`.
@@ -72,19 +70,17 @@ struct VideoPath {
 /// Serve the movie's bytes with range support, answering the two headers DLNA
 /// renderers send so seeking works on TVs.
 async fn video(
-    State(e): State<AppState>,
+    State(streamer): State<Arc<dyn Streamer>>,
     Path(p): Path<VideoPath>,
     range: Option<TypedHeader<Range>>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let (handle, file_idx, filename) = e.stream_target(&p.imdb_id)?;
-    let stream = handle.stream(file_idx).await.context("opening stream")?;
-    let len = stream.len();
-    let body = KnownSize::sized(stream, len);
+    let media = streamer.open(p.imdb_id.clone()).await?;
+    let body = KnownSize::sized(media.reader, media.len);
     let range = range.map(|TypedHeader(r)| r);
 
     let mut out = HeaderMap::new();
-    if let Some(mime) = mime_guess::from_path(&filename).first_raw() {
+    if let Some(mime) = mime_guess::from_path(&media.file_name).first_raw() {
         out.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
     }
     if headers

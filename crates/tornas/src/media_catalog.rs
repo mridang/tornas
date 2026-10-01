@@ -154,12 +154,14 @@ impl MediaEntry {
         }
     }
 
-    /// The server-relative URL that streams this file, e.g. `/video/tt0111161/x.mp4`.
-    pub fn video_path(&self) -> String {
+    /// The URL that streams this file under a protocol's route prefix, e.g.
+    /// `video_path("/video")` → `/video/tt0111161/x.mp4`. Each adapter passes its own
+    /// prefix, so the catalog never bakes in one protocol's route layout.
+    pub fn video_path(&self, prefix: &str) -> String {
         let file = url::form_urlencoded::byte_serialize(self.file_name.as_bytes())
             .collect::<String>()
             .replace('+', "%20");
-        format!("/video/{}/{file}", self.id)
+        format!("{prefix}/{}/{file}", self.id)
     }
 }
 
@@ -172,6 +174,30 @@ pub trait Library: Send + Sync {
     /// One fully-downloaded movie by IMDb id, or `None` if it is absent or still
     /// downloading.
     fn entry(&self, id: &str) -> Option<MediaEntry>;
+}
+
+/// Any seekable byte source (an `AsyncRead` that can also `AsyncSeek`). Boxed behind
+/// this so [`MediaStream`] can carry a reader without naming the torrent library's
+/// concrete stream type.
+pub trait ReadSeek: tokio::io::AsyncRead + tokio::io::AsyncSeek {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncSeek + ?Sized> ReadSeek for T {}
+
+/// An opened video stream: the bytes, their length, and the file name (for the
+/// content type). Everything a range HTTP response needs, with no download state.
+pub struct MediaStream {
+    pub reader: Box<dyn ReadSeek + Send + Unpin>,
+    pub len: u64,
+    pub file_name: String,
+}
+
+/// Opening a movie's bytes for playback. Implemented by the engine — only it can
+/// reach the torrent session — so the protocol adapters depend on this narrow trait
+/// rather than on the whole engine, and the torrent library never leaks past it.
+pub trait Streamer: Send + Sync {
+    fn open(
+        &self,
+        id: String,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<MediaStream>> + Send + '_>>;
 }
 
 impl Library for MediaCatalog {

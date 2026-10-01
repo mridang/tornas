@@ -6,7 +6,6 @@
 
 use std::sync::Arc;
 
-use anyhow::Context;
 use axum::{
     Router,
     extract::{Path, State},
@@ -20,8 +19,8 @@ use serde::Deserialize;
 use tracing::debug;
 
 use crate::{
-    http::{ApiError, AppState},
-    media_catalog::{Library, MediaEntry},
+    http::ApiError,
+    media_catalog::{Library, MediaEntry, Streamer},
     utils::human_bytes,
 };
 use stremio::{
@@ -44,20 +43,20 @@ pub type TornasAddon = stremio::Addon<StremioLibrary>;
 /// The Stremio addon as an axum router, ready to merge at the root: the manifest
 /// and catalog/meta/stream endpoints, plus this protocol's own `/video` byte route.
 /// Panics only on a malformed manifest, a programming error, not a runtime one.
-pub fn router(engine: AppState) -> Router {
-    let name = engine
-        .opts
-        .addon_name
-        .clone()
-        .unwrap_or_else(|| "Tornas".to_owned());
-    let addon = addon(StremioLibrary(engine.library.clone()), name).expect("valid addon manifest");
+pub fn router(
+    library: Arc<dyn Library>,
+    streamer: Arc<dyn Streamer>,
+    addon_name: String,
+    public_url: Option<String>,
+) -> Router {
+    let addon = addon(StremioLibrary(library), addon_name).expect("valid addon manifest");
     let addon_router = stremio::router_with(
         addon,
         stremio::RouterOptions {
             // tornas serves its own dashboard at `/` and applies its own CORS and
             // source-address checks to every route, these included.
             fallback: false,
-            public_url: engine.opts.public_url.clone(),
+            public_url,
         },
     );
     // The bytes Stremio players fetch. This is the URL `stream_for` hands out
@@ -68,7 +67,7 @@ pub fn router(engine: AppState) -> Router {
             .route("/video/{imdb_id}/{filename}", get(video))
             .route("/video/{imdb_id}", get(video))
             .route_layer(axum::middleware::from_fn(crate::adapters::track_stream))
-            .with_state(engine),
+            .with_state(streamer),
     )
 }
 
@@ -83,18 +82,16 @@ struct VideoPath {
 
 /// Serve the movie's bytes, with range support (seeking, 206/416) from `axum-range`.
 async fn video(
-    State(e): State<AppState>,
+    State(streamer): State<Arc<dyn Streamer>>,
     Path(p): Path<VideoPath>,
     range: Option<TypedHeader<Range>>,
 ) -> Result<Response, ApiError> {
-    let (handle, file_idx, filename) = e.stream_target(&p.imdb_id)?;
-    let stream = handle.stream(file_idx).await.context("opening stream")?;
-    let len = stream.len();
-    let body = KnownSize::sized(stream, len);
+    let media = streamer.open(p.imdb_id.clone()).await?;
+    let body = KnownSize::sized(media.reader, media.len);
     let range = range.map(|TypedHeader(r)| r);
 
     let mut out = HeaderMap::new();
-    if let Some(mime) = mime_guess::from_path(&filename).first_raw() {
+    if let Some(mime) = mime_guess::from_path(&media.file_name).first_raw() {
         out.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
     }
 
@@ -184,7 +181,10 @@ fn stream_for(e: &MediaEntry, base_url: &str) -> Stream {
             video_size: Some(e.file_size),
             binge_group: Some("tornas".to_owned()),
         },
-        ..Stream::new(StreamSource::Url(format!("{base_url}{}", e.video_path())))
+        ..Stream::new(StreamSource::Url(format!(
+            "{base_url}{}",
+            e.video_path("/video")
+        )))
     }
 }
 
