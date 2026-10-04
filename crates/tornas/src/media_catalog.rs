@@ -6,6 +6,7 @@
 //! carries the plan out, because only it knows librqbit.
 
 pub mod eviction;
+mod schema;
 pub mod store;
 
 use std::{path::Path, time::Duration};
