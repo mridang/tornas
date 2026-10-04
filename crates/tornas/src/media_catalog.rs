@@ -6,14 +6,15 @@
 //! carries the plan out, because only it knows librqbit.
 
 pub mod eviction;
-mod schema;
+mod orm;
 pub mod store;
 
 use std::{path::Path, time::Duration};
 
 use anyhow::Context;
 
-pub use store::{Catalog, Event, Movie, TorrentRow};
+pub use orm::Catalog;
+pub use store::{Event, Movie, TorrentRow};
 
 use crate::utils::now_secs;
 use eviction::{Candidate, Plan, PlanError};
