@@ -222,13 +222,16 @@ async fn api_stremio_and_video() {
         "{meta}"
     );
 
-    // A resource this addon does not serve answers in the protocol's shape, not
-    // tornas's error envelope.
-    let (st, err) = s
-        .json(M::GET, &format!("/subtitles/movie/{imdb}.json"), None)
-        .await;
-    assert_eq!(st, StatusCode::NOT_FOUND);
-    assert_eq!(err["err"], "not found", "{err}");
+    // A path that is not one of this addon's resources is a plain 404: the addon
+    // router only claims the resources it serves (catalog/meta/stream), and tornas
+    // owns every unmatched path.
+    let r = s
+        .http
+        .get(s.url(&format!("/subtitles/movie/{imdb}.json")))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
 
     // The manifest advertises exactly what is implemented.
     let resources = manifest["resources"].as_array().unwrap();

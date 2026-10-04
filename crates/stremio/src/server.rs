@@ -18,7 +18,7 @@ use tracing::warn;
 
 use super::extra::Extra;
 use super::handler::{CatalogRequest, Error, Handler, MetaRequest, Reply, StreamRequest};
-use super::model::{ContentType, Manifest, Resource};
+use super::model::{ContentType, Manifest};
 
 /// A finished addon: the manifest plus the one handler behind it.
 pub struct Addon<H> {
@@ -50,8 +50,12 @@ where
     let state = Arc::new(Mounted { addon, public_url });
     Router::new()
         .route("/manifest.json", get(manifest_root::<H>))
-        .route("/{p1}/{p2}/{p3}", get(dispatch::<H>))
-        .route("/{p1}/{p2}/{p3}/{p4}", get(dispatch::<H>))
+        // The protocol shape is `/{resource}/{type}/{id}.json`; catalog may add a
+        // trailing `/{extra}.json` blob (search/skip/genre).
+        .route("/catalog/{content_type}/{id}", get(catalog::<H>))
+        .route("/catalog/{content_type}/{id}/{extra}", get(catalog::<H>))
+        .route("/meta/{content_type}/{id}", get(meta::<H>))
+        .route("/stream/{content_type}/{id}", get(stream::<H>))
         .with_state(state)
 }
 
@@ -101,94 +105,71 @@ where
     json(m.addon.manifest(), None)
 }
 
-/// The raw, still-encoded path segments in declaration order.
-fn segments(params: &RawPathParams) -> Vec<String> {
-    params.iter().map(|(_, v)| v.to_owned()).collect()
-}
-
 fn strip_json(s: &str) -> &str {
     s.strip_suffix(".json").unwrap_or(s)
 }
 
-/// One handler for every arity; which reading applies is decided here.
-async fn dispatch<H>(State(m): Shared<H>, params: RawPathParams, headers: HeaderMap) -> Response
+/// The raw (still percent-encoded) value of a named path parameter.
+fn raw<'a>(params: &'a RawPathParams, name: &str) -> Option<&'a str> {
+    params.iter().find(|(k, _)| *k == name).map(|(_, v)| v)
+}
+
+/// The `{content_type}` and `{id}` every resource route carries. The type must be one
+/// we serve, or there is no such resource (404). Both are percent-decoded; the id's
+/// `.json` suffix is dropped.
+fn content_type_and_id(params: &RawPathParams) -> Option<(ContentType, String)> {
+    let content_type = ContentType::parse(&percent_decode(raw(params, "content_type")?))?;
+    let id = strip_json(&percent_decode(raw(params, "id")?)).to_owned();
+    Some((content_type, id))
+}
+
+async fn catalog<H>(State(m): Shared<H>, params: RawPathParams, headers: HeaderMap) -> Response
 where
     H: Handler,
 {
-    let segs = segments(&params);
-    let Some(req) = parse(&segs) else {
+    let Some((content_type, id)) = content_type_and_id(&params) else {
         return protocol_error(StatusCode::NOT_FOUND, "not found");
     };
-    let Parsed {
-        resource,
+    // The extra blob is split on `&`/`=` *before* decoding, so it is parsed from the
+    // raw segment — decoding first would mangle a value like "Tom & Jerry".
+    let extra = raw(&params, "extra").map(Extra::parse).unwrap_or_default();
+    let req = CatalogRequest {
+        base_url: base_url(m.public_url.as_deref(), &headers),
         content_type,
         id,
         extra,
-    } = req;
-    let base_url = base_url(m.public_url.as_deref(), &headers);
-
-    match resource {
-        Resource::Catalog => reply(
-            m.addon
-                .handler
-                .catalog(CatalogRequest {
-                    base_url,
-                    content_type,
-                    id,
-                    extra,
-                })
-                .await,
-        ),
-        Resource::Meta => reply(
-            m.addon
-                .handler
-                .meta(MetaRequest {
-                    base_url,
-                    content_type,
-                    id,
-                })
-                .await,
-        ),
-        Resource::Stream => reply(
-            m.addon
-                .handler
-                .stream(StreamRequest {
-                    base_url,
-                    content_type,
-                    id,
-                })
-                .await,
-        ),
-    }
-}
-
-pub(super) struct Parsed {
-    pub resource: Resource,
-    pub content_type: ContentType,
-    pub id: String,
-    pub extra: Extra,
-}
-
-/// Work out which reading of the path applies. Three segments is
-/// `resource/type/id`; four adds an `extra` blob. Anything else is not a route.
-pub(super) fn parse(segs: &[String]) -> Option<Parsed> {
-    let decoded = |s: &String| percent_decode(s);
-    let build = |rest: &[String], extra: Option<&String>| {
-        let resource = Resource::parse(&decoded(&rest[0]))?;
-        let content_type = ContentType::parse(&decoded(&rest[1]))?;
-        Some(Parsed {
-            resource,
-            content_type,
-            id: strip_json(&decoded(&rest[2])).to_owned(),
-            extra: extra.map(|e| Extra::parse(e)).unwrap_or_default(),
-        })
     };
+    reply(m.addon.handler.catalog(req).await)
+}
 
-    match segs.len() {
-        3 => build(&segs[0..3], None),
-        4 => build(&segs[0..3], Some(&segs[3])),
-        _ => None,
-    }
+async fn meta<H>(State(m): Shared<H>, params: RawPathParams, headers: HeaderMap) -> Response
+where
+    H: Handler,
+{
+    let Some((content_type, id)) = content_type_and_id(&params) else {
+        return protocol_error(StatusCode::NOT_FOUND, "not found");
+    };
+    let req = MetaRequest {
+        base_url: base_url(m.public_url.as_deref(), &headers),
+        content_type,
+        id,
+    };
+    reply(m.addon.handler.meta(req).await)
+}
+
+async fn stream<H>(State(m): Shared<H>, params: RawPathParams, headers: HeaderMap) -> Response
+where
+    H: Handler,
+{
+    let Some((content_type, id)) = content_type_and_id(&params) else {
+        return protocol_error(StatusCode::NOT_FOUND, "not found");
+    };
+    let req = StreamRequest {
+        base_url: base_url(m.public_url.as_deref(), &headers),
+        content_type,
+        id,
+    };
+    reply(m.addon.handler.stream(req).await)
 }
 
 /// Where the caller reached us, honouring a configured public URL and the usual
@@ -217,36 +198,10 @@ fn percent_decode(s: &str) -> String {
 mod tests {
     use super::*;
 
-    fn segs(parts: &[&str]) -> Vec<String> {
-        parts.iter().map(|s| (*s).to_owned()).collect()
-    }
-
     #[test]
-    fn three_segments_are_resource_type_id() {
-        let p = parse(&segs(&["catalog", "movie", "local.json"])).unwrap();
-        assert_eq!(p.resource, Resource::Catalog);
-        assert_eq!(p.content_type, ContentType::Movie);
-        assert_eq!(p.id, "local");
-        assert!(p.extra.is_empty());
-    }
-
-    #[test]
-    fn four_segments_carry_extras() {
-        let p = parse(&segs(&[
-            "catalog",
-            "movie",
-            "local",
-            "search=Tom%20%26%20Jerry.json",
-        ]))
-        .unwrap();
-        assert_eq!(p.extra.search(), Some("Tom & Jerry"));
-    }
-
-    #[test]
-    fn nonsense_paths_are_rejected() {
-        assert!(parse(&segs(&["nope", "movie", "x"])).is_none());
-        assert!(parse(&segs(&["catalog", "banana", "x"])).is_none());
-        assert!(parse(&segs(&["catalog", "movie"])).is_none());
-        assert!(parse(&segs(&["a", "b", "c", "d", "e", "f"])).is_none());
+    fn strip_json_drops_only_the_suffix() {
+        assert_eq!(strip_json("local.json"), "local");
+        assert_eq!(strip_json("tt0111161"), "tt0111161");
+        assert_eq!(strip_json("a.json.json"), "a.json");
     }
 }
