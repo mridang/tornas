@@ -4754,7 +4754,7 @@ dependencies = [
  "percent-encoding",
  "problemdetails",
  "prometheus",
- "rand 0.9.5",
+ "rand 0.10.2",
  "ratatui",
  "reqwest 0.13.5",
  "serde",
