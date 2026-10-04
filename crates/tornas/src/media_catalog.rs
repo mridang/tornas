@@ -158,9 +158,15 @@ impl MediaEntry {
     /// `video_path("/video")` → `/video/tt0111161/x.mp4`. Each adapter passes its own
     /// prefix, so the catalog never bakes in one protocol's route layout.
     pub fn video_path(&self, prefix: &str) -> String {
-        let file = url::form_urlencoded::byte_serialize(self.file_name.as_bytes())
-            .collect::<String>()
-            .replace('+', "%20");
+        use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+        // Encode everything unsafe in a path segment, but keep the handful of chars a
+        // filename commonly carries (so `movie.mp4` stays readable, not `movie%2Emp4`).
+        const SEGMENT: &percent_encoding::AsciiSet = &NON_ALPHANUMERIC
+            .remove(b'-')
+            .remove(b'.')
+            .remove(b'_')
+            .remove(b'*');
+        let file = utf8_percent_encode(&self.file_name, SEGMENT);
         format!("{prefix}/{}/{file}", self.id)
     }
 }

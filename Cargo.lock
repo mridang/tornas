@@ -4193,6 +4193,7 @@ version = "1.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "percent-encoding",
  "serde",
  "serde_json",
  "tracing",
@@ -4660,6 +4661,7 @@ dependencies = [
  "opentelemetry-prometheus",
  "opentelemetry_sdk",
  "parking_lot",
+ "percent-encoding",
  "problemdetails",
  "prometheus",
  "rand 0.9.5",
