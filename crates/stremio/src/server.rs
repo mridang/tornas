@@ -9,15 +9,18 @@ use std::sync::Arc;
 use axum::{
     Router,
     extract::{RawPathParams, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::get,
 };
+use axum_extra::TypedHeader;
+use axum_extra::headers::Host;
 use serde::Serialize;
 use tracing::warn;
 
 use super::extra::Extra;
 use super::handler::{CatalogRequest, Error, Handler, MetaRequest, Reply, StreamRequest};
+use super::header::ForwardedProto;
 use super::model::{ContentType, Manifest};
 
 /// A finished addon: the manifest plus the one handler behind it.
@@ -123,7 +126,7 @@ fn content_type_and_id(params: &RawPathParams) -> Option<(ContentType, String)> 
     Some((content_type, id))
 }
 
-async fn catalog<H>(State(m): Shared<H>, params: RawPathParams, headers: HeaderMap) -> Response
+async fn catalog<H>(State(m): Shared<H>, params: RawPathParams, host: Option<TypedHeader<Host>>, proto: Option<TypedHeader<ForwardedProto>>) -> Response
 where
     H: Handler,
 {
@@ -134,7 +137,7 @@ where
     // raw segment — decoding first would mangle a value like "Tom & Jerry".
     let extra = raw(&params, "extra").map(Extra::parse).unwrap_or_default();
     let req = CatalogRequest {
-        base_url: base_url(m.public_url.as_deref(), &headers),
+        base_url: base_url(m.public_url.as_deref(), host.as_ref(), proto.as_ref()),
         content_type,
         id,
         extra,
@@ -142,7 +145,7 @@ where
     reply(m.addon.handler.catalog(req).await)
 }
 
-async fn meta<H>(State(m): Shared<H>, params: RawPathParams, headers: HeaderMap) -> Response
+async fn meta<H>(State(m): Shared<H>, params: RawPathParams, host: Option<TypedHeader<Host>>, proto: Option<TypedHeader<ForwardedProto>>) -> Response
 where
     H: Handler,
 {
@@ -150,14 +153,14 @@ where
         return protocol_error(StatusCode::NOT_FOUND, "not found");
     };
     let req = MetaRequest {
-        base_url: base_url(m.public_url.as_deref(), &headers),
+        base_url: base_url(m.public_url.as_deref(), host.as_ref(), proto.as_ref()),
         content_type,
         id,
     };
     reply(m.addon.handler.meta(req).await)
 }
 
-async fn stream<H>(State(m): Shared<H>, params: RawPathParams, headers: HeaderMap) -> Response
+async fn stream<H>(State(m): Shared<H>, params: RawPathParams, host: Option<TypedHeader<Host>>, proto: Option<TypedHeader<ForwardedProto>>) -> Response
 where
     H: Handler,
 {
@@ -165,26 +168,29 @@ where
         return protocol_error(StatusCode::NOT_FOUND, "not found");
     };
     let req = StreamRequest {
-        base_url: base_url(m.public_url.as_deref(), &headers),
+        base_url: base_url(m.public_url.as_deref(), host.as_ref(), proto.as_ref()),
         content_type,
         id,
     };
     reply(m.addon.handler.stream(req).await)
 }
 
-/// Where the caller reached us, honouring a configured public URL and the usual
-/// reverse-proxy header.
-fn base_url(public_url: Option<&str>, headers: &HeaderMap) -> String {
+/// Where the caller reached us: a configured public URL wins, otherwise the `Host`
+/// header gives the authority and `X-Forwarded-Proto` the scheme (defaulting to
+/// `http`, which is what a LAN box without a proxy serves).
+fn base_url(
+    public_url: Option<&str>,
+    host: Option<&TypedHeader<Host>>,
+    proto: Option<&TypedHeader<ForwardedProto>>,
+) -> String {
     if let Some(u) = public_url {
         return u.trim_end_matches('/').to_owned();
     }
-    let host = headers
-        .get(header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or("localhost");
-    let scheme = headers
-        .get("x-forwarded-proto")
-        .and_then(|h| h.to_str().ok())
+    let host = host
+        .map(|TypedHeader(h)| h.to_string())
+        .unwrap_or_else(|| "localhost".to_owned());
+    let scheme = proto
+        .map(|TypedHeader(p)| p.scheme().as_str())
         .unwrap_or("http");
     format!("{scheme}://{host}")
 }

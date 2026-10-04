@@ -19,10 +19,12 @@
 
 pub mod extra;
 pub mod handler;
+pub mod header;
 pub mod model;
 pub mod server;
 
 pub use extra::Extra;
 pub use handler::{CatalogRequest, Error, Handler, MetaRequest, Reply, StreamRequest};
+pub use header::{ForwardedProto, Scheme};
 pub use model::*;
 pub use server::{Addon, router};
