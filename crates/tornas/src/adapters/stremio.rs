@@ -24,9 +24,9 @@ use crate::{
     utils::human_bytes,
 };
 use stremio::{
-    AddonBuilder, BuildError, CatalogDef, CatalogRequest, CatalogResponse, ContentType, Error,
-    ExtraDef, Handler, Meta, MetaPreview, MetaRequest, MetaResponse, PosterShape, Reply, Stream,
-    StreamBehaviorHints, StreamRequest, StreamResponse, StreamSource, Video,
+    Addon, CatalogDef, CatalogRequest, CatalogResponse, ContentType, Error, ExtraDef, Handler,
+    Manifest, Meta, MetaPreview, MetaRequest, MetaResponse, PosterShape, Reply, Resource,
+    ResourceEntry, Stream, StreamBehaviorHints, StreamRequest, StreamResponse, StreamSource, Video,
 };
 
 /// The id of the single catalogue this addon publishes.
@@ -49,16 +49,7 @@ pub fn router(
     addon_name: String,
     public_url: Option<String>,
 ) -> Router {
-    let addon = addon(StremioLibrary(library), addon_name).expect("valid addon manifest");
-    let addon_router = stremio::router_with(
-        addon,
-        stremio::RouterOptions {
-            // tornas serves its own dashboard at `/` and applies its own CORS and
-            // source-address checks to every route, these included.
-            fallback: false,
-            public_url,
-        },
-    );
+    let addon_router = stremio::router(addon(StremioLibrary(library), addon_name), public_url);
     // The bytes Stremio players fetch. This is the URL `stream_for` hands out
     // (`MediaEntry::video_path`), so keep the two in step. The stream-metrics layer is
     // scoped to these routes, so it never counts the addon's JSON endpoints.
@@ -101,20 +92,43 @@ async fn video(
     Ok((out, Ranged::new(range, body)).into_response())
 }
 
-/// Assemble the addon. The manifest follows from the handlers registered here.
-pub fn addon(library: StremioLibrary, name: String) -> Result<TornasAddon, BuildError> {
-    AddonBuilder::new("org.mridang.tornas", name, env!("CARGO_PKG_VERSION"))
-        .description("Movies downloaded to this home media center")
-        .logo("https://raw.githubusercontent.com/Stremio/stremio-art/main/originals/Stremio-logo-white.png")
-        .types([ContentType::Movie])
-        .id_prefixes(["tt"])
-        .catalogs([CatalogDef::new(ContentType::Movie, CATALOG_ID, "Local Library")
-            .extra(ExtraDef::optional("search"))
-            .extra(ExtraDef::optional("skip"))
-            .extra(ExtraDef::optional("genre"))])
-        .meta([ContentType::Movie])
-        .stream([ContentType::Movie])
-        .build(library)
+/// Assemble tornas's one addon: a single movie catalogue backed by the library,
+/// serving catalog, meta and stream for `tt` ids.
+pub fn addon(library: StremioLibrary, name: String) -> TornasAddon {
+    let movie = || vec![ContentType::Movie];
+    let tt = || vec!["tt".to_owned()];
+    let manifest = Manifest {
+        id: "org.mridang.tornas".to_owned(),
+        name,
+        description: "Movies downloaded to this home media center".to_owned(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        resources: vec![
+            ResourceEntry::Name(Resource::Catalog),
+            ResourceEntry::Detailed {
+                name: Resource::Meta,
+                types: movie(),
+                id_prefixes: tt(),
+            },
+            ResourceEntry::Detailed {
+                name: Resource::Stream,
+                types: movie(),
+                id_prefixes: tt(),
+            },
+        ],
+        types: movie(),
+        catalogs: vec![
+            CatalogDef::new(ContentType::Movie, CATALOG_ID, "Local Library")
+                .extra(ExtraDef::optional("search"))
+                .extra(ExtraDef::optional("skip"))
+                .extra(ExtraDef::optional("genre")),
+        ],
+        id_prefixes: tt(),
+        logo: Some(
+            "https://raw.githubusercontent.com/Stremio/stremio-art/main/originals/Stremio-logo-white.png"
+                .to_owned(),
+        ),
+    };
+    Addon::new(manifest, library)
 }
 
 /// Stremio pages in hundreds; a shorter page tells it the catalogue has ended.

@@ -1,8 +1,8 @@
 //! A server-side implementation of the Stremio addon protocol.
 //!
-//! Knows nothing about this crate: no engine, no catalog, no torrents. An
-//! application implements the handler traits in [`handler`] for its own data, wires
-//! them up with [`builder::AddonBuilder`], and mounts the router from [`router`].
+//! An application implements [`Handler`](handler::Handler) for its own data, builds a
+//! [`Manifest`](model::Manifest), pairs them with [`Addon::new`](server::Addon::new),
+//! and mounts the [`router`](server::router).
 //!
 //! ```text
 //! /manifest.json
@@ -12,15 +12,17 @@
 //!
 //! where `{extra}` is a query-string-shaped blob *inside the path*, e.g.
 //! `search=blade%20runner&skip=100`.
+//!
+//! Laid out like the `dlna` crate: `handler` is the trait the app implements, `model`
+//! the wire types, `server` the server; `extra` is the one extra piece this richer
+//! protocol needs (the query-in-path parser).
 
-pub mod builder;
 pub mod extra;
 pub mod handler;
 pub mod model;
 pub mod server;
 
-pub use builder::{Addon, AddonBuilder, BuildError};
 pub use extra::Extra;
 pub use handler::{CatalogRequest, Error, Handler, MetaRequest, Reply, StreamRequest};
 pub use model::*;
-pub use server::{RouterOptions, router, router_with};
+pub use server::{Addon, router};

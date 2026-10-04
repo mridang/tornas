@@ -16,51 +16,48 @@ use axum::{
 use serde::Serialize;
 use tracing::warn;
 
-use super::builder::Addon;
 use super::extra::Extra;
 use super::handler::{CatalogRequest, Error, Handler, MetaRequest, Reply, StreamRequest};
-use super::model::{ContentType, Resource};
+use super::model::{ContentType, Manifest, Resource};
 
-#[derive(Debug, Clone, Default)]
-pub struct RouterOptions {
-    /// Answer unmatched paths with the protocol's 404 body. Turn off when mounting
-    /// beside other routes that should keep their own 404s.
-    pub fallback: bool,
-    /// Absolute URL this addon is reachable at. Leave `None` to derive it from
-    /// each request's `Host` header, which is what a LAN box wants.
-    pub public_url: Option<String>,
+/// A finished addon: the manifest plus the one handler behind it.
+pub struct Addon<H> {
+    manifest: Manifest,
+    handler: H,
 }
 
-/// Every addon route, with a landing page and protocol 404s.
+impl<H> Addon<H> {
+    /// Pair a manifest with the handler that answers its requests.
+    pub fn new(manifest: Manifest, handler: H) -> Self {
+        Self { manifest, handler }
+    }
+
+    pub fn manifest(&self) -> &Manifest {
+        &self.manifest
+    }
+}
+
+/// Mount the addon as an axum router: the manifest route and the resource routes.
 ///
-/// The caller supplies CORS: the protocol requires every route, including the
-/// manifest, to allow all origins, and a host application usually has its own
-/// layer already.
-pub fn router<H>(addon: Addon<H>) -> Router
+/// The caller supplies CORS (the protocol requires every route to allow all origins)
+/// and owns unmatched paths — this router adds no fallback, because tornas serves its
+/// own dashboard and 404s. `public_url` is the absolute URL the addon is reached at;
+/// `None` derives it per request from the `Host` header, which is what a LAN box wants.
+pub fn router<H>(addon: Addon<H>, public_url: Option<String>) -> Router
 where
     H: Handler,
 {
-    router_with(addon, RouterOptions::default())
-}
-
-pub fn router_with<H>(addon: Addon<H>, opts: RouterOptions) -> Router
-where
-    H: Handler,
-{
-    let state = Arc::new(Mounted { addon, opts });
-    let mut r = Router::new()
+    let state = Arc::new(Mounted { addon, public_url });
+    Router::new()
         .route("/manifest.json", get(manifest_root::<H>))
         .route("/{p1}/{p2}/{p3}", get(dispatch::<H>))
-        .route("/{p1}/{p2}/{p3}/{p4}", get(dispatch::<H>));
-    if state.opts.fallback {
-        r = r.fallback(|| async { protocol_error(StatusCode::NOT_FOUND, "not found") });
-    }
-    r.with_state(state)
+        .route("/{p1}/{p2}/{p3}/{p4}", get(dispatch::<H>))
+        .with_state(state)
 }
 
 struct Mounted<H> {
     addon: Addon<H>,
-    opts: RouterOptions,
+    public_url: Option<String>,
 }
 
 type Shared<H> = State<Arc<Mounted<H>>>;
@@ -128,7 +125,7 @@ where
         id,
         extra,
     } = req;
-    let base_url = base_url(&m.opts, &headers);
+    let base_url = base_url(m.public_url.as_deref(), &headers);
 
     match resource {
         Resource::Catalog => reply(
@@ -196,8 +193,8 @@ pub(super) fn parse(segs: &[String]) -> Option<Parsed> {
 
 /// Where the caller reached us, honouring a configured public URL and the usual
 /// reverse-proxy header.
-fn base_url(opts: &RouterOptions, headers: &HeaderMap) -> String {
-    if let Some(u) = &opts.public_url {
+fn base_url(public_url: Option<&str>, headers: &HeaderMap) -> String {
+    if let Some(u) = public_url {
         return u.trim_end_matches('/').to_owned();
     }
     let host = headers
