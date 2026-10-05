@@ -1,6 +1,6 @@
 # Builder runs on the host's native arch (BUILDPLATFORM) and cross-compiles with
 # cargo-zigbuild, so arm64 and armv7 images build at native speed without QEMU.
-FROM --platform=$BUILDPLATFORM rust:1.95-alpine AS builder
+FROM --platform=$BUILDPLATFORM rust:1.98-alpine AS builder
 ARG TARGETPLATFORM
 RUN apk add --no-cache musl-dev cmake make curl xz clang perl
 ENV ZIG_VERSION=0.13.0
@@ -31,7 +31,7 @@ COPY --from=builder /tornas.sha256 /tornas.sha256
 COPY --from=builder /tornas.deb /tornas.deb
 COPY --from=builder /tornas.deb.sha256 /tornas.deb.sha256
 
-FROM alpine:3.20 AS runtime
+FROM alpine:3.24 AS runtime
 LABEL org.opencontainers.image.source="https://github.com/mridang/tornas"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.title="tornas"
