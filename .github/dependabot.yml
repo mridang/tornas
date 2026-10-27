@@ -8,15 +8,14 @@ updates:
       prefix: 'chore(deps):'
     open-pull-requests-limit: 10
     groups:
-      cargo-minor-and-patch:
-        applies-to: 'version-updates'
-        update-types:
-          - 'minor'
-          - 'patch'
-      cargo-security:
-        applies-to: 'security-updates'
+      cargo-version-updates:
         patterns:
           - '*'
+        applies-to: 'version-updates'
+      cargo-security-updates:
+        patterns:
+          - '*'
+        applies-to: 'security-updates'
 
   - package-ecosystem: 'github-actions'
     directory: '/'
@@ -26,15 +25,14 @@ updates:
       prefix: 'chore(deps):'
     open-pull-requests-limit: 10
     groups:
-      actions-minor-and-patch:
-        applies-to: 'version-updates'
-        update-types:
-          - 'minor'
-          - 'patch'
-      actions-security:
-        applies-to: 'security-updates'
+      actions-version-updates:
         patterns:
           - '*'
+        applies-to: 'version-updates'
+      actions-security-updates:
+        patterns:
+          - '*'
+        applies-to: 'security-updates'
 
   - package-ecosystem: 'docker'
     directory: '/'
@@ -42,14 +40,13 @@ updates:
       interval: 'weekly'
     commit-message:
       prefix: 'chore(deps):'
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     groups:
-      docker-minor-and-patch:
-        applies-to: 'version-updates'
-        update-types:
-          - 'minor'
-          - 'patch'
-      docker-security:
-        applies-to: 'security-updates'
+      docker-version-updates:
         patterns:
           - '*'
+        applies-to: 'version-updates'
+      docker-security-updates:
+        patterns:
+          - '*'
+        applies-to: 'security-updates'
