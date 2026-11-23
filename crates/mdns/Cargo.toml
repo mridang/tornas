@@ -9,5 +9,5 @@ authors.workspace = true
 
 [dependencies]
 anyhow = "1"
-mdns-sd = "0.21"
+mdns-sd = "0.22"
 tracing = "0.1"
